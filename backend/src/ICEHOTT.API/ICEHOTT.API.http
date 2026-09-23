@@ -1,0 +1,6 @@
+@ICEHOTT.API_HostAddress = http://localhost:5249
+
+GET {{ICEHOTT.API_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###

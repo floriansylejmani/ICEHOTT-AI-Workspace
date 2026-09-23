@@ -1,0 +1,27 @@
+# Environment
+.env
+.env.*
+!.env.example
+
+# Node
+node_modules/
+.next/
+coverage/
+
+# .NET
+bin/
+obj/
+TestResults/
+
+# Python
+.venv/
+__pycache__/
+.pytest_cache/
+*.pyc
+
+# IDE / OS
+.vs/
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
