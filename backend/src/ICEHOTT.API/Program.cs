@@ -2,8 +2,10 @@ using System.Text;
 using System.Text.Json.Serialization;
 using System.Threading.RateLimiting;
 using ICEHOTT.Application.Abstractions;
+using ICEHOTT.Application.Agents;
 using ICEHOTT.Application.Auth;
 using ICEHOTT.Application.Workspaces;
+using ICEHOTT.Infrastructure.Ai;
 using ICEHOTT.Infrastructure.Security;
 using ICEHOTT.Persistence;
 using ICEHOTT.Persistence.Repositories;
@@ -22,6 +24,10 @@ var jwt = builder.Configuration.GetSection(JwtOptions.SectionName).Get<JwtOption
 if (string.IsNullOrWhiteSpace(jwt.Key) || jwt.Key.Length < 32)
     throw new InvalidOperationException("Jwt:Key must be configured with at least 32 characters.");
 
+var aiRuntime = builder.Configuration.GetSection(AiRuntimeOptions.SectionName).Get<AiRuntimeOptions>() ?? new AiRuntimeOptions();
+if (!Uri.TryCreate(aiRuntime.BaseUrl, UriKind.Absolute, out var aiRuntimeUri))
+    throw new InvalidOperationException("AiRuntime:BaseUrl must be an absolute URI.");
+
 var allowedOrigins = builder.Configuration.GetSection("Cors:AllowedOrigins").Get<string[]>() ?? [];
 if (!builder.Environment.IsDevelopment() && allowedOrigins.Length == 0)
     throw new InvalidOperationException("Cors:AllowedOrigins must be configured outside Development.");
@@ -34,15 +40,23 @@ builder.Services.AddOpenApi();
 builder.Services.AddHealthChecks();
 builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.Configure<JwtOptions>(builder.Configuration.GetSection(JwtOptions.SectionName));
+builder.Services.Configure<AiRuntimeOptions>(builder.Configuration.GetSection(AiRuntimeOptions.SectionName));
 builder.Services.AddDbContext<ICEHOTTDbContext>(options => options.UseNpgsql(connectionString));
 builder.Services.AddScoped<IUserRepository, UserRepository>();
 builder.Services.AddScoped<IRefreshSessionRepository, RefreshSessionRepository>();
 builder.Services.AddScoped<IWorkspaceRepository, WorkspaceRepository>();
+builder.Services.AddScoped<IConversationRepository, ConversationRepository>();
 builder.Services.AddScoped<IUnitOfWork>(sp => sp.GetRequiredService<ICEHOTTDbContext>());
 builder.Services.AddSingleton<IPasswordService, PasswordService>();
 builder.Services.AddSingleton<ITokenService, TokenService>();
+builder.Services.AddHttpClient<IAiRuntimeClient, AiRuntimeClient>(client =>
+{
+    client.BaseAddress = new Uri(aiRuntimeUri.ToString().TrimEnd('/') + "/");
+    client.Timeout = TimeSpan.FromSeconds(Math.Clamp(aiRuntime.TimeoutSeconds, 5, 120));
+});
 builder.Services.AddScoped<AuthService>();
 builder.Services.AddScoped<WorkspaceService>();
+builder.Services.AddScoped<AgentService>();
 
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer(options => options.TokenValidationParameters = new TokenValidationParameters

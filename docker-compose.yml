@@ -25,6 +25,18 @@ services:
       timeout: 3s
       retries: 10
 
+  ai:
+    build:
+      context: .
+      dockerfile: ai/icehott-ai-service/Dockerfile
+    ports:
+      - "8000:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
   api:
     build:
       context: .
@@ -35,6 +47,8 @@ services:
       Jwt__Key: ${JWT_SECRET_KEY:-ICEHOTT-development-only-key-never-use-in-production-2026}
       Cors__AllowedOrigins__0: http://localhost:3000
       Database__AutoMigrate: "true"
+      AiRuntime__BaseUrl: http://ai:8000
+      AiRuntime__TimeoutSeconds: "30"
     ports:
       - "5050:8080"
     depends_on:
@@ -42,13 +56,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-
-  ai:
-    build:
-      context: .
-      dockerfile: ai/icehott-ai-service/Dockerfile
-    ports:
-      - "8000:8000"
+      ai:
+        condition: service_healthy
 
 volumes:
   postgres_data:

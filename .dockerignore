@@ -1,0 +1,14 @@
+.git
+.github
+.pytest_cache
+**/__pycache__
+**/.pytest_cache
+**/.venv
+**/node_modules
+**/.next
+**/bin
+**/obj
+**/TestResults
+*.user
+*.suo
+.env

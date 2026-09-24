@@ -1,4 +1,4 @@
-# ICEHOTT API Contract — Phase 1
+# ICEHOTT API Contract — Phases 1–2
 
 Base path: `/api`
 
@@ -86,6 +86,42 @@ Admin boundary:
 - `Admin` → allowed
 - `Member` → `403`
 - no membership → `404`
+
+## Agent runtime endpoints
+
+All agent endpoints require a valid access token and workspace membership.
+
+### GET `/api/workspaces/{workspaceId}/conversations`
+
+Returns the latest workspace conversations, ordered by most recent activity.
+
+### GET `/api/workspaces/{workspaceId}/conversations/{conversationId}`
+
+Returns one workspace-scoped conversation and its persisted message history.
+
+A caller without workspace membership receives `404`. A conversation from another workspace is never returned.
+
+### POST `/api/workspaces/{workspaceId}/conversations/chat`
+
+Request:
+
+```json
+{
+  "conversationId": null,
+  "content": "Hello ICEHOTT"
+}
+```
+
+Omit the conversation ID by sending `null` to start a new conversation. Reuse the returned ID for the next turn.
+
+The API persists the user message, sends workspace-scoped history to the FastAPI AI runtime, persists the assistant message, and returns both messages plus runtime metadata.
+
+Representative Phase 2 errors:
+- `message_required`
+- `message_too_long`
+- `conversation_not_found`
+- `workspace_not_found`
+- `ai_runtime_unavailable`
 
 ## Roles
 

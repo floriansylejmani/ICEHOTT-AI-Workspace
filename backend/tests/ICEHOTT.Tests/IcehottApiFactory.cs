@@ -1,3 +1,4 @@
+using ICEHOTT.Application.Abstractions;
 using ICEHOTT.Persistence;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
@@ -28,7 +29,9 @@ public sealed class IcehottApiFactory : WebApplicationFactory<Program>
             services.RemoveAll<IDbContextOptionsConfiguration<ICEHOTTDbContext>>();
             services.RemoveAll<DbContextOptions<ICEHOTTDbContext>>();
             services.RemoveAll<ICEHOTTDbContext>();
+            services.RemoveAll<IAiRuntimeClient>();
             services.AddDbContext<ICEHOTTDbContext>(options => options.UseSqlite(_connection));
+            services.AddSingleton<IAiRuntimeClient, FakeAiRuntimeClient>();
         });
     }
 
@@ -36,5 +39,19 @@ public sealed class IcehottApiFactory : WebApplicationFactory<Program>
     {
         base.Dispose(disposing);
         if (disposing) _connection.Dispose();
+    }
+
+    private sealed class FakeAiRuntimeClient : IAiRuntimeClient
+    {
+        public Task<AiRuntimeReply> ReplyAsync(
+            AiRuntimeRequest request,
+            CancellationToken cancellationToken = default)
+        {
+            var lastUser = request.Messages.Last(x => x.Role == "user").Content;
+            return Task.FromResult(new AiRuntimeReply(
+                $"Test ICEHOTT reply: {lastUser}",
+                "test-runtime",
+                "test-model"));
+        }
     }
 }

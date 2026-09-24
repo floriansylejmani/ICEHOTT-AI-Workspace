@@ -1,4 +1,5 @@
 using ICEHOTT.Application.Abstractions;
+using ICEHOTT.Domain.Agents;
 using ICEHOTT.Domain.Security;
 using ICEHOTT.Domain.Users;
 using ICEHOTT.Domain.Workspaces;
@@ -12,6 +13,8 @@ public sealed class ICEHOTTDbContext(DbContextOptions<ICEHOTTDbContext> options)
     public DbSet<Workspace> Workspaces => Set<Workspace>();
     public DbSet<WorkspaceMembership> WorkspaceMemberships => Set<WorkspaceMembership>();
     public DbSet<RefreshSession> RefreshSessions => Set<RefreshSession>();
+    public DbSet<Conversation> Conversations => Set<Conversation>();
+    public DbSet<ConversationMessage> ConversationMessages => Set<ConversationMessage>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {

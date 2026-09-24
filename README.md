@@ -34,6 +34,17 @@ ICEHOTT is a production-oriented AI workspace for agentic work: knowledge, tools
 - API and frontend integration tests
 - CI migration validation against a real pgvector/PostgreSQL service
 
+### Phase 2 — AI Agent Runtime
+- Authenticated workspace-scoped AI chat
+- Conversation and message history persisted in PostgreSQL
+- ASP.NET Core → FastAPI runtime boundary
+- Tenant isolation enforced before conversation access
+- Active `Ask ICEHOTT…` dashboard input
+- Latest conversation restoration and new-chat flow
+- Phase 2 EF Core migration
+- Backend, frontend, and AI runtime tests
+- Docker AI health dependency and runtime verification
+
 ## Architecture
 
 ```text
@@ -107,4 +118,4 @@ The merge gate requires:
 - EF migration script validation
 - migration application to pgvector/PostgreSQL in GitHub Actions
 
-See [Phase 1](docs/PHASE-1-IDENTITY-WORKSPACES.md), [API contract](docs/API.md), [Architecture](docs/ARCHITECTURE.md), and [Security](docs/SECURITY.md).
+See [Phase 1](docs/PHASE-1-IDENTITY-WORKSPACES.md), [Phase 2](docs/PHASE-2-AGENT-RUNTIME.md), [API contract](docs/API.md), [Architecture](docs/ARCHITECTURE.md), and [Security](docs/SECURITY.md).

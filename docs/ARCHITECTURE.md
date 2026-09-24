@@ -6,7 +6,7 @@
 - `backend/src/ICEHOTT.API`: HTTP/authentication boundary
 - `ICEHOTT.Application`: use cases and interfaces
 - `ICEHOTT.Domain`: domain entities and workspace roles
-- `ICEHOTT.Infrastructure`: password/token/security implementations
+- `ICEHOTT.Infrastructure`: password/token/security implementations and the FastAPI AI HTTP client
 - `ICEHOTT.Persistence`: EF Core PostgreSQL persistence and migrations
 - `ai/icehott-ai-service`: Python FastAPI AI runtime
 - PostgreSQL + pgvector: durable application data and future embeddings
@@ -50,6 +50,35 @@ Register / Login
 
 Protected request -> 401 -> refresh (CSRF header) -> rotate refresh -> retry once
 ```
+
+## Phase 2 agent flow
+
+```text
+Authenticated browser
+      |
+      | workspaceId + prompt
+      v
+AgentController
+      |
+      +--> WorkspaceMembership gate
+      |
+      +--> ConversationRepository --> PostgreSQL
+      |
+      v
+IAiRuntimeClient
+      |
+      v
+FastAPI /v1/chat
+      |
+      v
+assistant response
+      |
+      +--> persisted message
+      v
+dashboard
+```
+
+The FastAPI runtime is behind an application interface, so a model provider can be replaced without moving authorization or tenant-scoping logic out of ASP.NET Core.
 
 ## Tenant model
 
