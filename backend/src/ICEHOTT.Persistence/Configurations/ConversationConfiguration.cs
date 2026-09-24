@@ -12,6 +12,7 @@ public sealed class ConversationConfiguration : IEntityTypeConfiguration<Convers
     {
         builder.ToTable("conversations");
         builder.HasKey(x => x.Id);
+        builder.HasAlternateKey(x => new { x.Id, x.WorkspaceId });
         builder.Property(x => x.Title).HasMaxLength(80).IsRequired();
         builder.HasIndex(x => new { x.WorkspaceId, x.UpdatedAtUtc });
 

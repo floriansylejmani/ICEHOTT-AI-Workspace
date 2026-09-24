@@ -54,6 +54,7 @@ ICEHOTT is a production-oriented AI workspace for agentic work: knowledge, tools
 - Hybrid semantic + lexical retrieval
 - HNSW cosine index plus GIN full-text index
 - Embedding rows protected by chunk/workspace ownership checks and workspace FK integrity
+- Composite database tenant constraints across conversations, messages, citations, documents, chunks, and embeddings
 - RAG context injected into agent chat
 - Server-derived source citations persisted with messages
 - Knowledge upload/search/delete UI in the dashboard

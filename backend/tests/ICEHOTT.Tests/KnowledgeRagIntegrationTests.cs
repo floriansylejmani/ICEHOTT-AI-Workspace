@@ -3,6 +3,7 @@ using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text;
 using System.Text.Json;
+using ICEHOTT.Domain.Knowledge;
 using ICEHOTT.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
@@ -161,6 +162,55 @@ public sealed class KnowledgeRagIntegrationTests : IClassFixture<IcehottApiFacto
         var db = scope.ServiceProvider.GetRequiredService<ICEHOTTDbContext>();
         Assert.False(await db.KnowledgeDocuments.AnyAsync(x => x.Id == documentId));
         Assert.False(await db.KnowledgeChunks.AnyAsync(x => x.DocumentId == documentId));
+    }
+
+    [Fact]
+    public async Task Database_Rejects_Cross_Workspace_Knowledge_Chunk()
+    {
+        using var owner = _factory.CreateClient();
+        var identity = await RegisterAsync(owner, $"tenant-chunk-{Guid.NewGuid():N}@icehott.dev");
+        owner.DefaultRequestHeaders.Authorization =
+            new AuthenticationHeaderValue("Bearer", identity.Token);
+
+        var workspaceOneResponse = await owner.PostAsJsonAsync(
+            "/api/workspaces",
+            new { name = "Tenant One" });
+        workspaceOneResponse.EnsureSuccessStatusCode();
+        var workspaceOneId = JsonDocument.Parse(
+            await workspaceOneResponse.Content.ReadAsStringAsync())
+            .RootElement.GetProperty("id").GetGuid();
+
+        var workspaceTwoResponse = await owner.PostAsJsonAsync(
+            "/api/workspaces",
+            new { name = "Tenant Two" });
+        workspaceTwoResponse.EnsureSuccessStatusCode();
+        var workspaceTwoId = JsonDocument.Parse(
+            await workspaceTwoResponse.Content.ReadAsStringAsync())
+            .RootElement.GetProperty("id").GetGuid();
+
+        var ingest = await owner.PostAsJsonAsync(
+            $"/api/workspaces/{workspaceOneId}/knowledge/documents",
+            new
+            {
+                title = "Tenant Integrity",
+                sourceName = "integrity.txt",
+                content = "Workspace one knowledge."
+            });
+        ingest.EnsureSuccessStatusCode();
+        var documentId = JsonDocument.Parse(await ingest.Content.ReadAsStringAsync())
+            .RootElement.GetProperty("id").GetGuid();
+
+        using var scope = _factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<ICEHOTTDbContext>();
+        db.KnowledgeChunks.Add(new KnowledgeChunk(
+            Guid.NewGuid(),
+            documentId,
+            workspaceTwoId,
+            999,
+            "Cross-workspace chunk must fail.",
+            DateTimeOffset.UtcNow));
+
+        await Assert.ThrowsAsync<DbUpdateException>(() => db.SaveChangesAsync());
     }
 
     private static async Task<RegisteredIdentity> RegisterAsync(HttpClient client, string email)

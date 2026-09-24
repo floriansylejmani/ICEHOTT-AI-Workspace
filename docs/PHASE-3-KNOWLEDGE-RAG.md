@@ -91,6 +91,9 @@ A GIN expression index on `to_tsvector('simple', "Content")` supports lexical ra
 The API verifies workspace membership before listing, ingesting, uploading, deleting, searching, retrieving RAG context, or reading citations.
 
 The retrieval query independently scopes embedding rows, chunks, and documents by the same `WorkspaceId`. A document ID from another workspace is never accepted for deletion through the active workspace route.
+
+Database-level composite foreign keys additionally require the same `WorkspaceId` across conversation → message → citation and document → chunk → embedding relationships. This prevents cross-tenant parent/child linkage even if a future application bug bypasses repository filters.
+
 ## Ingestion safety and lifecycle
 
 - Upload size is capped at 10 MB server-side.
@@ -134,6 +137,7 @@ Chat takes the best workspace-scoped matches, applies a minimum score guard, pas
 - `20260924113819_Phase3KnowledgeRag`: knowledge documents/chunks/citations, pgvector extension, vector table, HNSW index.
 - `20260924121721_Phase3KnowledgeHardening`: GIN full-text search index for hybrid retrieval.
 - `20260924123531_Phase3VectorStoreIntegrity`: workspace foreign key for embedding rows; vector writes also verify chunk/workspace ownership before upsert.
+- `20260924125021_Phase3TenantIntegrity`: composite workspace foreign keys across conversations/messages/citations and knowledge documents/chunks/embeddings.
 
 ## Validation
 
@@ -155,8 +159,9 @@ Final validation performed on September 24, 2026 includes:
 - live health, embeddings, retrieval SQL, and frontend HTTP smoke checks
 - real PostgreSQL vector smoke transaction returned cosine similarity `1.000` and was rolled back
 - embedding rows now have both chunk and workspace referential integrity
+- database composite-FK regression tests reject cross-workspace knowledge chunks and conversation messages
 
-At the final pre-commit gate the suites contain 17 backend tests, 8 frontend tests, and 5 AI-service tests.
+At the final pre-commit gate the suites contain 19 backend tests, 8 frontend tests, and 5 AI-service tests.
 
 ## Next phase
 

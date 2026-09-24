@@ -44,6 +44,7 @@
 ### Knowledge isolation
 - Knowledge listing, ingestion, search, and RAG retrieval require workspace membership.
 - Vector rows carry `WorkspaceId` and retrieval filters both vector rows and documents by the authenticated workspace.
+- Composite database foreign keys enforce matching `WorkspaceId` across conversations/messages/citations and documents/chunks/embeddings.
 - Conversation citations are generated from server-side retrieval results, not from model-provided source labels.
 - Failed indexing leaves the document marked `Failed` instead of presenting it as retrievable knowledge.
 

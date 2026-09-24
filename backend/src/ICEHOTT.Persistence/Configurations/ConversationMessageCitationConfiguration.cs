@@ -15,7 +15,8 @@ public sealed class ConversationMessageCitationConfiguration : IEntityTypeConfig
         builder.HasIndex(x => new { x.WorkspaceId, x.MessageId });
 
         builder.HasOne<ConversationMessage>().WithMany()
-            .HasForeignKey(x => x.MessageId)
+            .HasForeignKey(x => new { x.MessageId, x.WorkspaceId })
+            .HasPrincipalKey(x => new { x.Id, x.WorkspaceId })
             .OnDelete(DeleteBehavior.Cascade);
     }
 }

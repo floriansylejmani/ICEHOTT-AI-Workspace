@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text.Json;
+using ICEHOTT.Domain.Agents;
 using ICEHOTT.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
@@ -60,6 +61,50 @@ public sealed class AgentRuntimeIntegrationTests : IClassFixture<IcehottApiFacto
         Assert.Equal(
             HttpStatusCode.NotFound,
             (await outsider.GetAsync($"/api/workspaces/{workspaceId}/conversations/{conversationId}")).StatusCode);
+    }
+
+    [Fact]
+    public async Task Database_Rejects_Cross_Workspace_Conversation_Message()
+    {
+        using var owner = _factory.CreateClient();
+        var identity = await RegisterAsync(owner, $"tenant-message-{Guid.NewGuid():N}@icehott.dev");
+        owner.DefaultRequestHeaders.Authorization =
+            new AuthenticationHeaderValue("Bearer", identity.Token);
+
+        var firstWorkspaceResponse = await owner.PostAsJsonAsync(
+            "/api/workspaces",
+            new { name = "Conversation Tenant One" });
+        firstWorkspaceResponse.EnsureSuccessStatusCode();
+        var firstWorkspaceId = JsonDocument.Parse(
+            await firstWorkspaceResponse.Content.ReadAsStringAsync())
+            .RootElement.GetProperty("id").GetGuid();
+
+        var secondWorkspaceResponse = await owner.PostAsJsonAsync(
+            "/api/workspaces",
+            new { name = "Conversation Tenant Two" });
+        secondWorkspaceResponse.EnsureSuccessStatusCode();
+        var secondWorkspaceId = JsonDocument.Parse(
+            await secondWorkspaceResponse.Content.ReadAsStringAsync())
+            .RootElement.GetProperty("id").GetGuid();
+
+        var chat = await owner.PostAsJsonAsync(
+            $"/api/workspaces/{firstWorkspaceId}/conversations/chat",
+            new { conversationId = (Guid?)null, content = "Create tenant-bound conversation" });
+        chat.EnsureSuccessStatusCode();
+        var conversationId = JsonDocument.Parse(await chat.Content.ReadAsStringAsync())
+            .RootElement.GetProperty("conversationId").GetGuid();
+
+        using var scope = _factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<ICEHOTTDbContext>();
+        db.ConversationMessages.Add(new ConversationMessage(
+            Guid.NewGuid(),
+            conversationId,
+            secondWorkspaceId,
+            MessageRole.User,
+            "Cross-workspace message must fail.",
+            DateTimeOffset.UtcNow));
+
+        await Assert.ThrowsAsync<DbUpdateException>(() => db.SaveChangesAsync());
     }
 
     private static async Task<RegisteredIdentity> RegisterAsync(HttpClient client, string email)

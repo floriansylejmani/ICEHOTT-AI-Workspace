@@ -12,6 +12,7 @@ public sealed class KnowledgeDocumentConfiguration : IEntityTypeConfiguration<Kn
     {
         builder.ToTable("knowledge_documents");
         builder.HasKey(x => x.Id);
+        builder.HasAlternateKey(x => new { x.Id, x.WorkspaceId });
         builder.Property(x => x.Title).HasMaxLength(200).IsRequired();
         builder.Property(x => x.SourceName).HasMaxLength(260);
         builder.Property(x => x.Content).HasColumnType("text").IsRequired();

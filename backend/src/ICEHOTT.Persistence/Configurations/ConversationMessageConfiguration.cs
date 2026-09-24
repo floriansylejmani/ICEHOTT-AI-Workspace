@@ -10,6 +10,7 @@ public sealed class ConversationMessageConfiguration : IEntityTypeConfiguration<
     {
         builder.ToTable("conversation_messages");
         builder.HasKey(x => x.Id);
+        builder.HasAlternateKey(x => new { x.Id, x.WorkspaceId });
         builder.Property(x => x.Role)
             .HasConversion<string>()
             .HasMaxLength(20)
@@ -18,7 +19,8 @@ public sealed class ConversationMessageConfiguration : IEntityTypeConfiguration<
         builder.HasIndex(x => new { x.WorkspaceId, x.ConversationId, x.CreatedAtUtc });
 
         builder.HasOne<Conversation>().WithMany()
-            .HasForeignKey(x => x.ConversationId)
+            .HasForeignKey(x => new { x.ConversationId, x.WorkspaceId })
+            .HasPrincipalKey(x => new { x.Id, x.WorkspaceId })
             .OnDelete(DeleteBehavior.Cascade);
     }
 }
