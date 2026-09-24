@@ -178,7 +178,11 @@ Create Building Profile B
 Provision B HNSW
         |
         v
-Reindex all target chunks/documents using B
+Embed the existing stable chunk rows into B
+(do not replace chunk IDs)
+        |
+        v
+Catch up any chunks created while B was building
         |
         v
 Verify B coverage/completeness
@@ -210,11 +214,17 @@ If the activation transaction fails, A remains Active.
 
 Do not delete A vectors/index during activation.
 
-## 9. Build completeness
+## 9. Stable chunk identity and build completeness
 
-A Building profile cannot activate based only on profile status/index existence.
+A Building profile cannot be produced through the current document indexing path if that path replaces chunk rows. Replacing chunks would cascade-delete embeddings belonging to the still-serving Active profile.
 
-Activation preflight must prove expected vector coverage for the target corpus.
+Phase 3.6B therefore freezes this rule:
+
+- ordinary document ingestion may continue to create/replace chunks for the serving corpus;
+- semantic profile building must reuse the current persisted chunk IDs and add a second embedding row for the Building profile;
+- chunking-strategy migration is a separate future concern and must use an explicit corpus/chunk version rather than silently replacing the serving corpus during an embedding-profile migration.
+
+A Building profile cannot activate based only on profile status/index existence. Activation preflight must prove expected vector coverage for the target corpus.
 
 Minimum Phase 3.6B-Foundation invariant:
 
@@ -225,6 +235,8 @@ Embedding rows for Building profile count
 ```
 
 within the deployment scope being promoted.
+
+Because normal ingestion can create new chunks while B is building, the build process must support catch-up passes for chunks missing a B embedding. The final activation transaction must prevent a chunk-write race during its last completeness check. The PostgreSQL implementation may use a brief table lock or an equivalently strong transactional mechanism; a plain count followed by a later status update is not sufficient.
 
 If future product semantics allow intentionally excluded documents/chunks, the completeness contract must become explicit and versioned.
 
@@ -242,11 +254,12 @@ Preconditions:
 2. exactly one current Active profile exists;
 3. candidate provider/profile metadata is valid;
 4. profile-specific HNSW exists and matches dimensions;
-5. embedding coverage is complete;
-6. deterministic evaluation thresholds pass;
-7. any required offline/provider evaluation evidence is present;
-8. no tenant-leakage result;
-9. activation occurs inside one database transaction.
+5. embedding coverage is complete against stable persisted chunk IDs;
+6. the final completeness check is protected from concurrent chunk writes;
+7. deterministic evaluation thresholds pass;
+8. any required offline/provider evaluation evidence is present;
+9. no tenant-leakage result;
+10. activation occurs inside one database transaction.
 
 Transaction:
 

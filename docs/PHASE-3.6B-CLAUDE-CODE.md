@@ -28,7 +28,8 @@ Implementation agent. Do not merge or push main.
 ## Hard invariants
 
 - retrieval uses Active only;
-- build/reindex uses Building only;
+- ordinary document ingestion keeps using the Active/Serving profile;
+- Building-profile generation must use a separate stable-chunk build path that reuses existing chunk IDs; never run the current ReplaceChunks ingestion path against Building;
 - Building is never silently served;
 - current HNSW path rejects dimensions > 2000;
 - provider response dimensions must exactly match profile;
