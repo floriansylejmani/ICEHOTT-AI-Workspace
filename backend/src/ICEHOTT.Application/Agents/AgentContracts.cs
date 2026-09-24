@@ -8,11 +8,19 @@ public sealed record ConversationSummary(
     DateTimeOffset CreatedAtUtc,
     DateTimeOffset UpdatedAtUtc);
 
+public sealed record CitationView(
+    Guid DocumentId,
+    Guid ChunkId,
+    string Title,
+    string? SourceName,
+    double Score);
+
 public sealed record MessageView(
     Guid Id,
     MessageRole Role,
     string Content,
-    DateTimeOffset CreatedAtUtc);
+    DateTimeOffset CreatedAtUtc,
+    IReadOnlyList<CitationView> Citations);
 
 public sealed record ConversationView(
     Guid Id,

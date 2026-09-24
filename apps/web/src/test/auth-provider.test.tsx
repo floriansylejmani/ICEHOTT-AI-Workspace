@@ -18,6 +18,16 @@ function Probe() {
       >
         load
       </button>
+      <button
+        onClick={() => {
+          const form = new FormData();
+          form.append("title", "Upload");
+          void apiFetch("/api/upload", { method: "POST", body: form })
+            .then((result) => setLoaded(result.ok ? "uploaded" : "failed"));
+        }}
+      >
+        upload
+      </button>
     </div>
   );
 }
@@ -85,6 +95,30 @@ describe("AuthProvider", () => {
 
     const retryInit = fetchMock.mock.calls[4][1] as RequestInit;
     expect((retryInit.headers as Headers).get("Authorization")).toBe("Bearer access-two");
+  });
+
+  it("keeps multipart content type browser-managed", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(response(401))
+      .mockResolvedValueOnce(response(200, authBody("access-token")))
+      .mockResolvedValueOnce(response(200));
+
+    vi.stubGlobal("fetch", fetchMock);
+    render(<AuthProvider><Probe /></AuthProvider>);
+
+    expect(await screen.findByText("anonymous")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "login" }));
+    expect(await screen.findByText("authenticated:Test User")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "upload" }));
+    expect(await screen.findByText("uploaded")).toBeInTheDocument();
+
+    const uploadInit = fetchMock.mock.calls[2][1] as RequestInit;
+    const headers = uploadInit.headers as Headers;
+    expect(headers.get("Authorization")).toBe("Bearer access-token");
+    expect(headers.has("Content-Type")).toBe(false);
+    expect(uploadInit.body).toBeInstanceOf(FormData);
   });
 
   it("clears local authentication state after logout", async () => {

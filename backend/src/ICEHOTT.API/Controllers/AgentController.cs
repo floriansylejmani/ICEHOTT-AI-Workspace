@@ -53,6 +53,10 @@ public sealed class AgentController(AgentService agent) : ControllerBase
         {
             return StatusCode(StatusCodes.Status503ServiceUnavailable, new { code = "ai_runtime_unavailable" });
         }
+        catch (VectorStoreUnavailableException)
+        {
+            return StatusCode(StatusCodes.Status503ServiceUnavailable, new { code = "knowledge_unavailable" });
+        }
     }
 
     private Guid CurrentUserId() => Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);

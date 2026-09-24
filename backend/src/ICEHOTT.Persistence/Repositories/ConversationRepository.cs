@@ -16,6 +16,14 @@ public sealed class ConversationRepository(ICEHOTTDbContext db) : IConversationR
         CancellationToken cancellationToken = default) =>
         await db.ConversationMessages.AddAsync(message, cancellationToken);
 
+    public async Task AddCitationsAsync(
+        IReadOnlyList<ConversationMessageCitation> citations,
+        CancellationToken cancellationToken = default)
+    {
+        if (citations.Count > 0)
+            await db.ConversationMessageCitations.AddRangeAsync(citations, cancellationToken);
+    }
+
     public Task<Conversation?> FindAsync(
         Guid workspaceId,
         Guid conversationId,
@@ -45,5 +53,23 @@ public sealed class ConversationRepository(ICEHOTTDbContext db) : IConversationR
             .ToListAsync(cancellationToken);
 
         return items.OrderBy(x => x.CreatedAtUtc).ToArray();
+    }
+
+    public async Task<IReadOnlyList<ConversationMessageCitation>> ListCitationsAsync(
+        Guid workspaceId,
+        Guid conversationId,
+        CancellationToken cancellationToken = default)
+    {
+        var messageIds = await db.ConversationMessages.AsNoTracking()
+            .Where(x => x.WorkspaceId == workspaceId && x.ConversationId == conversationId)
+            .Select(x => x.Id)
+            .ToListAsync(cancellationToken);
+
+        if (messageIds.Count == 0) return [];
+
+        return await db.ConversationMessageCitations.AsNoTracking()
+            .Where(x => x.WorkspaceId == workspaceId && messageIds.Contains(x.MessageId))
+            .OrderByDescending(x => x.Score)
+            .ToListAsync(cancellationToken);
     }
 }

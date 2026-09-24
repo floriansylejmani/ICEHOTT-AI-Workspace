@@ -15,7 +15,7 @@ describe("AgentPanel", () => {
     cleanup();
   });
 
-  it("sends the first workspace-scoped message and renders the AI reply", async () => {
+  it("renders a workspace-scoped RAG reply with source citations", async () => {
     const apiFetch = vi
       .fn()
       .mockResolvedValueOnce(jsonResponse(200, []))
@@ -25,17 +25,27 @@ describe("AgentPanel", () => {
           userMessage: {
             id: "message-user",
             role: "User",
-            content: "Hello ICEHOTT",
+            content: "What is the support window?",
             createdAtUtc: "2026-09-24T10:00:00Z",
+            citations: [],
           },
           assistantMessage: {
             id: "message-ai",
             role: "Assistant",
-            content: "ICEHOTT AI runtime is online.",
+            content: "The support window is thirty days.",
             createdAtUtc: "2026-09-24T10:00:01Z",
+            citations: [
+              {
+                documentId: "document-1",
+                chunkId: "chunk-1",
+                title: "Support Policy",
+                sourceName: "support-policy.txt",
+                score: 0.91,
+              },
+            ],
           },
           provider: "icehott-local",
-          model: "phase2-baseline-runtime",
+          model: "phase3-rag-baseline",
         }),
       );
 
@@ -43,13 +53,13 @@ describe("AgentPanel", () => {
 
     await waitFor(() => expect(apiFetch).toHaveBeenCalledTimes(1));
     fireEvent.change(screen.getByLabelText("Ask ICEHOTT"), {
-      target: { value: "Hello ICEHOTT" },
+      target: { value: "What is the support window?" },
     });
     fireEvent.click(screen.getByRole("button", { name: "Send" }));
 
-    expect(await screen.findByText("Hello ICEHOTT")).toBeInTheDocument();
-    expect(await screen.findByText("ICEHOTT AI runtime is online.")).toBeInTheDocument();
-    expect(await screen.findByText("icehott-local · phase2-baseline-runtime")).toBeInTheDocument();
+    expect(await screen.findByText("The support window is thirty days.")).toBeInTheDocument();
+    expect(await screen.findByText("Support Policy · 91%")).toBeInTheDocument();
+    expect(await screen.findByText("icehott-local · phase3-rag-baseline")).toBeInTheDocument();
 
     expect(apiFetch).toHaveBeenLastCalledWith(
       "/api/workspaces/workspace-1/conversations/chat",

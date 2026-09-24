@@ -9,7 +9,7 @@
 - `ICEHOTT.Infrastructure`: password/token/security implementations and the FastAPI AI HTTP client
 - `ICEHOTT.Persistence`: EF Core PostgreSQL persistence and migrations
 - `ai/icehott-ai-service`: Python FastAPI AI runtime
-- PostgreSQL + pgvector: durable application data and future embeddings
+- PostgreSQL + pgvector: durable application data, vector embeddings, and RAG retrieval
 - Redis: future caching, coordination, and background-work primitives
 
 ## Request path
@@ -79,6 +79,40 @@ dashboard
 ```
 
 The FastAPI runtime is behind an application interface, so a model provider can be replaced without moving authorization or tenant-scoping logic out of ASP.NET Core.
+
+## Phase 3 RAG flow
+
+```text
+Workspace knowledge / uploaded file
+      |
+      v
+KnowledgeController
+      |
+      +--> membership gate
+      +--> filename/type/size validation
+      +--> server-side PDF/DOCX/text extraction
+      +--> overlapping chunking
+      +--> batched FastAPI /v1/embeddings
+      +--> PostgreSQL metadata
+      +--> pgvector vector(64) + HNSW
+      +--> PostgreSQL full-text GIN index
+
+User prompt
+      |
+      v
+query embedding --> workspace-filtered hybrid retrieval
+                  (semantic + lexical)
+      |
+      v
+retrieved chunks --> FastAPI /v1/chat
+      |
+      +--> assistant response
+      +--> persisted citation metadata
+      v
+dashboard
+```
+
+Vector persistence is isolated behind `IVectorStore`; provider/model calls remain behind `IAiRuntimeClient`. The Domain project has no pgvector or provider SDK dependency.
 
 ## Tenant model
 

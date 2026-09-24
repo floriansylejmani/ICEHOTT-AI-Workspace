@@ -45,6 +45,20 @@ ICEHOTT is a production-oriented AI workspace for agentic work: knowledge, tools
 - Backend, frontend, and AI runtime tests
 - Docker AI health dependency and runtime verification
 
+### Phase 3 — Knowledge / RAG
+- Workspace-scoped knowledge ingestion and deletion
+- Server-side PDF / DOCX / TXT / MD / CSV / JSON extraction
+- 10 MB upload limit, filename sanitization, and extension allowlist
+- Deterministic overlapping chunking with batched embeddings
+- PostgreSQL pgvector `vector(64)`
+- Hybrid semantic + lexical retrieval
+- HNSW cosine index plus GIN full-text index
+- Embedding rows protected by chunk/workspace ownership checks and workspace FK integrity
+- RAG context injected into agent chat
+- Server-derived source citations persisted with messages
+- Knowledge upload/search/delete UI in the dashboard
+- Tenant-isolated retrieval and upload integration tests
+
 ## Architecture
 
 ```text
@@ -118,4 +132,4 @@ The merge gate requires:
 - EF migration script validation
 - migration application to pgvector/PostgreSQL in GitHub Actions
 
-See [Phase 1](docs/PHASE-1-IDENTITY-WORKSPACES.md), [Phase 2](docs/PHASE-2-AGENT-RUNTIME.md), [API contract](docs/API.md), [Architecture](docs/ARCHITECTURE.md), and [Security](docs/SECURITY.md).
+See [Phase 1](docs/PHASE-1-IDENTITY-WORKSPACES.md), [Phase 2](docs/PHASE-2-AGENT-RUNTIME.md), [Phase 3](docs/PHASE-3-KNOWLEDGE-RAG.md), [API contract](docs/API.md), [Architecture](docs/ARCHITECTURE.md), and [Security](docs/SECURITY.md).

@@ -4,8 +4,10 @@ using System.Threading.RateLimiting;
 using ICEHOTT.Application.Abstractions;
 using ICEHOTT.Application.Agents;
 using ICEHOTT.Application.Auth;
+using ICEHOTT.Application.Knowledge;
 using ICEHOTT.Application.Workspaces;
 using ICEHOTT.Infrastructure.Ai;
+using ICEHOTT.Infrastructure.Documents;
 using ICEHOTT.Infrastructure.Security;
 using ICEHOTT.Persistence;
 using ICEHOTT.Persistence.Repositories;
@@ -46,9 +48,12 @@ builder.Services.AddScoped<IUserRepository, UserRepository>();
 builder.Services.AddScoped<IRefreshSessionRepository, RefreshSessionRepository>();
 builder.Services.AddScoped<IWorkspaceRepository, WorkspaceRepository>();
 builder.Services.AddScoped<IConversationRepository, ConversationRepository>();
+builder.Services.AddScoped<IKnowledgeRepository, KnowledgeRepository>();
+builder.Services.AddScoped<IVectorStore, PostgresVectorStore>();
 builder.Services.AddScoped<IUnitOfWork>(sp => sp.GetRequiredService<ICEHOTTDbContext>());
 builder.Services.AddSingleton<IPasswordService, PasswordService>();
 builder.Services.AddSingleton<ITokenService, TokenService>();
+builder.Services.AddSingleton<IDocumentTextExtractor, DocumentTextExtractor>();
 builder.Services.AddHttpClient<IAiRuntimeClient, AiRuntimeClient>(client =>
 {
     client.BaseAddress = new Uri(aiRuntimeUri.ToString().TrimEnd('/') + "/");
@@ -57,6 +62,7 @@ builder.Services.AddHttpClient<IAiRuntimeClient, AiRuntimeClient>(client =>
 builder.Services.AddScoped<AuthService>();
 builder.Services.AddScoped<WorkspaceService>();
 builder.Services.AddScoped<AgentService>();
+builder.Services.AddScoped<KnowledgeService>();
 
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer(options => options.TokenValidationParameters = new TokenValidationParameters

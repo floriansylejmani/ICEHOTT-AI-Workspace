@@ -6,6 +6,7 @@ namespace ICEHOTT.Application.Agents;
 public sealed class AgentService(
     IWorkspaceRepository workspaces,
     IConversationRepository conversations,
+    IVectorStore vectorStore,
     IAiRuntimeClient aiRuntime,
     IUnitOfWork unitOfWork,
     TimeProvider clock)
@@ -35,7 +36,8 @@ public sealed class AgentService(
         if (conversation is null) return new(null, "conversation_not_found");
 
         var messages = await conversations.ListMessagesAsync(workspaceId, conversationId, cancellationToken);
-        return new(MapConversation(conversation, messages), null);
+        var citations = await conversations.ListCitationsAsync(workspaceId, conversationId, cancellationToken);
+        return new(MapConversation(conversation, messages, citations), null);
     }
 
     public async Task<AgentResult<ChatReply>> SendAsync(
@@ -85,13 +87,33 @@ public sealed class AgentService(
         conversation.Touch(now);
         await unitOfWork.SaveChangesAsync(cancellationToken);
 
+        var embeddingReply = await aiRuntime.EmbedAsync([normalizedContent], cancellationToken);
+        if (embeddingReply.Embeddings.Count != 1)
+            throw new AiRuntimeUnavailableException("AI runtime returned an invalid query embedding.");
+
+        var matches = (await vectorStore.SearchAsync(
+                workspaceId,
+                normalizedContent,
+                embeddingReply.Embeddings[0],
+                5,
+                cancellationToken))
+            .Where(match => match.Score >= 0.15)
+            .ToArray();
+
         var history = await conversations.ListMessagesAsync(workspaceId, conversation.Id, cancellationToken);
         var runtimeReply = await aiRuntime.ReplyAsync(
             new AiRuntimeRequest(
                 workspaceId,
                 userId,
                 conversation.Id,
-                history.Select(MapRuntimeTurn).ToArray()),
+                history.Select(MapRuntimeTurn).ToArray(),
+                matches.Select(match => new AiRuntimeKnowledge(
+                    match.ChunkId,
+                    match.DocumentId,
+                    match.Title,
+                    match.SourceName,
+                    match.Content,
+                    match.Score)).ToArray()),
             cancellationToken);
 
         var assistantMessage = new ConversationMessage(
@@ -102,14 +124,26 @@ public sealed class AgentService(
             runtimeReply.Content,
             clock.GetUtcNow());
 
+        var citations = matches.Select(match => new ConversationMessageCitation(
+            Guid.NewGuid(),
+            assistantMessage.Id,
+            workspaceId,
+            match.DocumentId,
+            match.ChunkId,
+            match.Title,
+            match.SourceName,
+            match.Score,
+            assistantMessage.CreatedAtUtc)).ToArray();
+
         await conversations.AddMessageAsync(assistantMessage, cancellationToken);
+        await conversations.AddCitationsAsync(citations, cancellationToken);
         conversation.Touch(assistantMessage.CreatedAtUtc);
         await unitOfWork.SaveChangesAsync(cancellationToken);
 
         return new(new ChatReply(
             conversation.Id,
-            MapMessage(userMessage),
-            MapMessage(assistantMessage),
+            MapMessage(userMessage, []),
+            MapMessage(assistantMessage, citations),
             runtimeReply.Provider,
             runtimeReply.Model), null);
     }
@@ -123,17 +157,40 @@ public sealed class AgentService(
 
     private static ConversationView MapConversation(
         Conversation conversation,
-        IReadOnlyList<ConversationMessage> messages) =>
-        new(
+        IReadOnlyList<ConversationMessage> messages,
+        IReadOnlyList<ConversationMessageCitation> citations)
+    {
+        var citationsByMessage = citations
+            .GroupBy(x => x.MessageId)
+            .ToDictionary(group => group.Key, group => (IReadOnlyList<ConversationMessageCitation>)group.ToArray());
+
+        return new(
             conversation.Id,
             conversation.WorkspaceId,
             conversation.Title,
             conversation.CreatedAtUtc,
             conversation.UpdatedAtUtc,
-            messages.Select(MapMessage).ToArray());
+            messages.Select(message => MapMessage(
+                message,
+                citationsByMessage.TryGetValue(message.Id, out var messageCitations)
+                    ? messageCitations
+                    : [])).ToArray());
+    }
 
-    private static MessageView MapMessage(ConversationMessage message) =>
-        new(message.Id, message.Role, message.Content, message.CreatedAtUtc);
+    private static MessageView MapMessage(
+        ConversationMessage message,
+        IReadOnlyList<ConversationMessageCitation> citations) =>
+        new(
+            message.Id,
+            message.Role,
+            message.Content,
+            message.CreatedAtUtc,
+            citations.Select(citation => new CitationView(
+                citation.DocumentId,
+                citation.ChunkId,
+                citation.Title,
+                citation.SourceName,
+                citation.Score)).ToArray());
 
     private static AiRuntimeTurn MapRuntimeTurn(ConversationMessage message) =>
         new(message.Role switch

@@ -9,6 +9,16 @@ ICEHOTT will treat evaluation as a product feature, not an afterthought.
 - Context recall
 - Citation correctness
 
+## Phase 3 deterministic checks
+- Embeddings have the expected 64 dimensions.
+- Non-empty embeddings are normalized.
+- Workspace knowledge cannot be retrieved by a non-member.
+- Indexed documents transition to `Ready` only after vector storage succeeds.
+- Chat citations come from retrieved chunks and persist with conversation history.
+- Frontend tests verify citation rendering and knowledge retrieval UX.
+
+These checks validate the RAG pipeline mechanics. They do not establish production semantic quality; groundedness, recall, precision, and citation correctness still require a versioned evaluation dataset.
+
 ## Agent metrics
 - Task completion rate
 - Tool-call success rate

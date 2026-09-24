@@ -1,5 +1,6 @@
 using ICEHOTT.Application.Abstractions;
 using ICEHOTT.Domain.Agents;
+using ICEHOTT.Domain.Knowledge;
 using ICEHOTT.Domain.Security;
 using ICEHOTT.Domain.Users;
 using ICEHOTT.Domain.Workspaces;
@@ -15,6 +16,9 @@ public sealed class ICEHOTTDbContext(DbContextOptions<ICEHOTTDbContext> options)
     public DbSet<RefreshSession> RefreshSessions => Set<RefreshSession>();
     public DbSet<Conversation> Conversations => Set<Conversation>();
     public DbSet<ConversationMessage> ConversationMessages => Set<ConversationMessage>();
+    public DbSet<ConversationMessageCitation> ConversationMessageCitations => Set<ConversationMessageCitation>();
+    public DbSet<KnowledgeDocument> KnowledgeDocuments => Set<KnowledgeDocument>();
+    public DbSet<KnowledgeChunk> KnowledgeChunks => Set<KnowledgeChunk>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {

@@ -15,7 +15,14 @@ public sealed class AiRuntimeClient(HttpClient httpClient) : IAiRuntimeClient
                 request.WorkspaceId,
                 request.UserId,
                 request.ConversationId,
-                request.Messages.Select(x => new RuntimeMessage(x.Role, x.Content)).ToArray());
+                request.Messages.Select(x => new RuntimeMessage(x.Role, x.Content)).ToArray(),
+                request.Knowledge.Select(x => new RuntimeKnowledge(
+                    x.ChunkId,
+                    x.DocumentId,
+                    x.Title,
+                    x.SourceName,
+                    x.Content,
+                    x.Score)).ToArray());
 
             using var response = await httpClient.PostAsJsonAsync("v1/chat", payload, cancellationToken);
             if (!response.IsSuccessStatusCode)
@@ -41,13 +48,62 @@ public sealed class AiRuntimeClient(HttpClient httpClient) : IAiRuntimeClient
         }
     }
 
+    public async Task<AiEmbeddingReply> EmbedAsync(
+        IReadOnlyList<string> texts,
+        CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            using var response = await httpClient.PostAsJsonAsync(
+                "v1/embeddings",
+                new EmbeddingRequest(texts),
+                cancellationToken);
+
+            if (!response.IsSuccessStatusCode)
+                throw new AiRuntimeUnavailableException(
+                    $"Embedding runtime returned HTTP {(int)response.StatusCode}.");
+
+            var result = await response.Content.ReadFromJsonAsync<EmbeddingResponse>(
+                cancellationToken: cancellationToken);
+
+            if (result is null || result.Embeddings.Count != texts.Count)
+                throw new AiRuntimeUnavailableException("Embedding runtime returned an invalid response.");
+
+            return new AiEmbeddingReply(
+                result.Dimensions,
+                result.Embeddings.Select(vector => (IReadOnlyList<float>)vector).ToArray());
+        }
+        catch (AiRuntimeUnavailableException)
+        {
+            throw;
+        }
+        catch (Exception exception) when (
+            exception is HttpRequestException or TaskCanceledException or NotSupportedException)
+        {
+            throw new AiRuntimeUnavailableException("Embedding runtime is unavailable.", exception);
+        }
+    }
+
     private sealed record RuntimeRequest(
         Guid WorkspaceId,
         Guid UserId,
         Guid ConversationId,
-        IReadOnlyList<RuntimeMessage> Messages);
+        IReadOnlyList<RuntimeMessage> Messages,
+        IReadOnlyList<RuntimeKnowledge> Knowledge);
 
     private sealed record RuntimeMessage(string Role, string Content);
 
+    private sealed record RuntimeKnowledge(
+        Guid ChunkId,
+        Guid DocumentId,
+        string Title,
+        string? SourceName,
+        string Content,
+        double Score);
+
     private sealed record RuntimeResponse(string Content, string Provider, string Model);
+
+    private sealed record EmbeddingRequest(IReadOnlyList<string> Texts);
+
+    private sealed record EmbeddingResponse(int Dimensions, List<List<float>> Embeddings);
 }

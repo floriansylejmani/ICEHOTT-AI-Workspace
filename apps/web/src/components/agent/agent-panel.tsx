@@ -11,11 +11,20 @@ type ConversationSummary = {
   updatedAtUtc: string;
 };
 
+type CitationView = {
+  documentId: string;
+  chunkId: string;
+  title: string;
+  sourceName: string | null;
+  score: number;
+};
+
 type MessageView = {
   id: string;
   role: string;
   content: string;
   createdAtUtc: string;
+  citations: CitationView[];
 };
 
 type ConversationView = {
@@ -142,7 +151,7 @@ export function AgentPanel({
             Agent runtime is live.
           </h2>
           <p className="mt-2 text-sm text-white/35">
-            Workspace-scoped history is stored securely in PostgreSQL.
+            Workspace history, pgvector retrieval, and source citations are active.
           </p>
         </div>
         {conversationId && (
@@ -160,7 +169,7 @@ export function AgentPanel({
         {loading && <p className="text-sm text-white/30">Loading conversation…</p>}
         {!loading && messages.length === 0 && (
           <div className="rounded-2xl border border-white/8 bg-black/20 p-5 text-sm text-white/35">
-            Ask ICEHOTT anything to start the first Phase 2 conversation.
+            Ask ICEHOTT anything. Relevant workspace knowledge will be retrieved automatically.
           </div>
         )}
         {messages.map((message) => {
@@ -179,6 +188,18 @@ export function AgentPanel({
               <p className={isUser ? "mt-2 text-[10px] text-black/45" : "mt-2 text-[10px] text-white/25"}>
                 {isUser ? "You" : "ICEHOTT AI"}
               </p>
+              {!isUser && message.citations.length > 0 && (
+                <div className="mt-3 flex flex-wrap gap-2 border-t border-white/8 pt-3">
+                  {message.citations.map((citation) => (
+                    <span
+                      key={citation.chunkId}
+                      className="rounded-full border border-amber-200/15 bg-amber-100/[0.05] px-2.5 py-1 text-[10px] text-amber-100/60"
+                    >
+                      {citation.title} · {(citation.score * 100).toFixed(0)}%
+                    </span>
+                  ))}
+                </div>
+              )}
             </div>
           );
         })}
@@ -205,7 +226,7 @@ export function AgentPanel({
         </div>
         <div className="mt-2 flex min-h-5 items-center justify-between gap-4 text-[11px]">
           <span className="text-red-200/70">{error}</span>
-          <span className="text-white/25">{runtime || "Phase 2 runtime"}</span>
+          <span className="text-white/25">{runtime || "Phase 3 RAG runtime"}</span>
         </div>
       </form>
     </section>

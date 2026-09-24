@@ -1,4 +1,4 @@
-# ICEHOTT API Contract — Phases 1–2
+# ICEHOTT API Contract — Phases 1–3
 
 Base path: `/api`
 
@@ -114,14 +114,71 @@ Request:
 
 Omit the conversation ID by sending `null` to start a new conversation. Reuse the returned ID for the next turn.
 
-The API persists the user message, sends workspace-scoped history to the FastAPI AI runtime, persists the assistant message, and returns both messages plus runtime metadata.
+The API persists the user message, embeds the prompt, retrieves relevant workspace chunks from pgvector, sends workspace-scoped history plus retrieved context to FastAPI, persists the assistant message and source citations, and returns both messages plus runtime metadata.
 
-Representative Phase 2 errors:
+Representative agent errors:
 - `message_required`
 - `message_too_long`
 - `conversation_not_found`
 - `workspace_not_found`
 - `ai_runtime_unavailable`
+- `knowledge_unavailable`
+
+## Knowledge / RAG endpoints
+
+All knowledge endpoints require a valid access token and membership in the workspace.
+
+### GET `/api/workspaces/{workspaceId}/knowledge/documents`
+
+Lists only documents owned by the requested workspace, including indexing status and chunk count.
+
+### POST `/api/workspaces/{workspaceId}/knowledge/documents`
+
+Request:
+
+```json
+{
+  "title": "Support Policy",
+  "sourceName": "support-policy.md",
+  "content": "Workspace knowledge text..."
+}
+```
+
+The API validates the request, chunks the text, requests embeddings from FastAPI in batches, stores document/chunk metadata in PostgreSQL, and stores 64-dimensional vectors in pgvector. A document is marked `Ready` only after vector indexing succeeds.
+
+### POST `/api/workspaces/{workspaceId}/knowledge/documents/upload`
+
+Accepts `multipart/form-data` with:
+
+- `file`: required
+- `title`: optional; defaults to the sanitized filename without extension
+
+Supported extensions are PDF, DOCX, TXT, MD, CSV, and JSON. Extraction runs server-side. Upload size is limited to 10 MB and the original filename is reduced to its safe base filename before persistence.
+
+### DELETE `/api/workspaces/{workspaceId}/knowledge/documents/{documentId}`
+
+Deletes a document belonging to the active workspace. Related chunks and pgvector rows are removed through database cascades.
+
+### GET `/api/workspaces/{workspaceId}/knowledge/search?query=...&limit=5`
+
+Embeds the query and performs workspace-filtered hybrid retrieval: 80% cosine vector similarity plus 20% PostgreSQL lexical ranking. The maximum result limit is 10.
+
+Representative knowledge errors:
+- `title_required`
+- `title_too_long`
+- `content_required`
+- `content_too_long`
+- `source_name_too_long`
+- `file_required`
+- `file_too_large`
+- `unsupported_file_type`
+- `file_parse_failed`
+- `document_not_found`
+- `query_required`
+- `query_too_long`
+- `embedding_runtime_unavailable`
+- `vector_store_unavailable`
+- `workspace_not_found`
 
 ## Roles
 

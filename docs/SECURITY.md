@@ -39,9 +39,25 @@
 - Production startup rejects a missing/short JWT signing key.
 - Production startup rejects missing CORS origins.
 
+## Phase 3 implemented controls
+
+### Knowledge isolation
+- Knowledge listing, ingestion, search, and RAG retrieval require workspace membership.
+- Vector rows carry `WorkspaceId` and retrieval filters both vector rows and documents by the authenticated workspace.
+- Conversation citations are generated from server-side retrieval results, not from model-provided source labels.
+- Failed indexing leaves the document marked `Failed` instead of presenting it as retrievable knowledge.
+
+### Ingestion limits
+- Knowledge title, source name, query, text, and upload sizes are bounded server-side.
+- Uploaded filenames are reduced to their base filename before persistence.
+- Uploads use an explicit extension allowlist: PDF, DOCX, TXT, MD, CSV, and JSON.
+- PDF/DOCX/text extraction runs on the server; malformed supported files are rejected.
+- The server enforces a 10 MB upload limit independently of browser checks.
+- Embeddings are generated in bounded batches so large accepted documents cannot exceed the AI runtime request limit.
+
 ## Required controls for later phases
 
-- File type/content validation
+- Malware scanning and deeper file-signature inspection for production uploads
 - Prompt-injection defenses for retrieved content
 - Tool allowlists and per-tool permissions
 - Secret storage through deployment platforms

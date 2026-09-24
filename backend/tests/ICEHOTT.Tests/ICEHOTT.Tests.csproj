@@ -25,6 +25,7 @@
     <ProjectReference Include="..\..\src\ICEHOTT.API\ICEHOTT.API.csproj" />
     <ProjectReference Include="..\..\src\ICEHOTT.Application\ICEHOTT.Application.csproj" />
     <ProjectReference Include="..\..\src\ICEHOTT.Domain\ICEHOTT.Domain.csproj" />
+    <ProjectReference Include="..\..\src\ICEHOTT.Infrastructure\ICEHOTT.Infrastructure.csproj" />
     <ProjectReference Include="..\..\src\ICEHOTT.Persistence\ICEHOTT.Persistence.csproj" />
   </ItemGroup>
 

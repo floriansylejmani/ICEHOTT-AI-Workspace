@@ -3,6 +3,7 @@
 import { FormEvent, useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { AgentPanel } from "@/components/agent/agent-panel";
+import { KnowledgePanel } from "@/components/knowledge/knowledge-panel";
 import { useAuth } from "@/lib/auth";
 
 type Workspace = {
@@ -134,6 +135,10 @@ export function WorkspaceShell() {
                   <span className="text-[9px] uppercase tracking-wider text-emerald-200/50">
                     Runtime
                   </span>
+                ) : index === 3 ? (
+                  <span className="text-[9px] uppercase tracking-wider text-emerald-200/50">
+                    RAG
+                  </span>
                 ) : index > 1 ? (
                   <span className="text-[9px] uppercase tracking-wider text-white/20">Soon</span>
                 ) : null}
@@ -173,6 +178,7 @@ export function WorkspaceShell() {
             </header>
 
             <AgentPanel workspaceId={activeWorkspace?.id ?? null} apiFetch={apiFetch} />
+            <KnowledgePanel workspaceId={activeWorkspace?.id ?? null} apiFetch={apiFetch} />
 
             <div className="mt-8 grid gap-4 md:grid-cols-2">
               <section className="rounded-2xl border border-white/10 bg-white/[0.025] p-6">
@@ -242,7 +248,7 @@ export function WorkspaceShell() {
               ["Tenant isolation", "Active"],
               ["Refresh rotation", "Active"],
               ["Agent runtime", "Active"],
-              ["Knowledge / RAG", "Phase 3"],
+              ["Knowledge / RAG", "Active"],
             ].map(([label, value]) => (
               <div
                 key={label}
