@@ -26,8 +26,22 @@ public sealed class EmbeddingProviderTests
             new FixedDimensionRuntime(64),
             options);
 
+        var profile = new EmbeddingProfileDescriptor(
+            options.Value.EmbeddingProfileId,
+            options.Value.EmbeddingProfileKey,
+            options.Value.EmbeddingProvider,
+            options.Value.EmbeddingModel,
+            options.Value.EmbeddingDimensions,
+            options.Value.EmbeddingVersion,
+            options.Value.EmbeddingIndexVersion,
+            options.Value.EmbeddingDistanceMetric,
+            options.Value.EmbeddingNormalization);
+
         var exception = await Assert.ThrowsAsync<EmbeddingProviderException>(
-            () => provider.EmbedAsync(["hello"]));
+            () => provider.EmbedAsync(
+                profile,
+                EmbeddingPurpose.Query,
+                ["hello"]));
 
         Assert.Equal(EmbeddingFailureKind.ProfileMismatch, exception.Kind);
         Assert.False(exception.IsRetryable);

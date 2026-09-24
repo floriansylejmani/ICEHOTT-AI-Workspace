@@ -106,15 +106,25 @@ public sealed class IcehottApiFactory : WebApplicationFactory<Program>
 
     private sealed class FakeEmbeddingProvider(IAiRuntimeClient runtime) : IEmbeddingProvider
     {
-        public EmbeddingProfileDescriptor Profile { get; } =
-            EmbeddingProfileDefaults.LocalDeterministic64;
+        public string Provider => EmbeddingProfileDefaults.LocalDeterministic64.Provider;
+
+        public EmbeddingProviderCapabilities Capabilities { get; } =
+            new(
+                EmbeddingProfileDefaults.LocalDeterministic64.Provider,
+                new HashSet<int> { EmbeddingProfileDefaults.LocalDeterministic64.Dimensions },
+                64,
+                null,
+                false);
 
         public async Task<EmbeddingBatch> EmbedAsync(
+            EmbeddingProfileDescriptor profile,
+            EmbeddingPurpose purpose,
             IReadOnlyList<string> texts,
             CancellationToken cancellationToken = default)
         {
+            Capabilities.ValidateProfile(profile);
             var reply = await runtime.EmbedAsync(texts, cancellationToken);
-            return new EmbeddingBatch(Profile, reply.Embeddings);
+            return new EmbeddingBatch(profile, reply.Embeddings);
         }
     }
 

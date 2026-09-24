@@ -76,6 +76,7 @@ builder.Services.AddHttpClient<IAiRuntimeClient, AiRuntimeClient>(client =>
     client.Timeout = TimeSpan.FromSeconds(Math.Clamp(aiRuntime.TimeoutSeconds, 5, 120));
 });
 builder.Services.AddScoped<IEmbeddingProvider, AiRuntimeEmbeddingProvider>();
+builder.Services.AddScoped<IEmbeddingProviderRegistry, EmbeddingProviderRegistry>();
 builder.Services.AddScoped<IKnowledgeRetriever, KnowledgeRetriever>();
 
 builder.Services.AddScoped<AuthService>();
@@ -143,17 +144,34 @@ app.MapHealthChecks("/health");
 app.MapGet("/ready", async (
     ICEHOTTDbContext db,
     IAiRuntimeClient aiRuntimeClient,
-    IEmbeddingProvider embeddingProvider,
+    IServingEmbeddingProfileResolver servingProfiles,
+    IEmbeddingProviderRegistry embeddingProviders,
     IVectorStore vectorStore,
     CancellationToken cancellationToken) =>
 {
     var databaseReady = await db.Database.CanConnectAsync(cancellationToken);
     var aiReady = await aiRuntimeClient.IsReadyAsync(cancellationToken);
-    var embeddingProfileReady =
-        databaseReady &&
-        await vectorStore.IsProfileReadyAsync(
-            embeddingProvider.Profile,
-            cancellationToken);
+
+    EmbeddingProfileDescriptor? profile = null;
+    var embeddingProfileReady = false;
+
+    if (databaseReady)
+    {
+        try
+        {
+            profile = await servingProfiles.ResolveAsync(cancellationToken);
+            var provider = embeddingProviders.Resolve(profile.Provider);
+            provider.Capabilities.ValidateProfile(profile);
+            embeddingProfileReady = await vectorStore.IsProfileReadyAsync(
+                profile,
+                cancellationToken);
+        }
+        catch (Exception exception) when (
+            exception is InvalidOperationException or EmbeddingProviderException)
+        {
+            embeddingProfileReady = false;
+        }
+    }
 
     return databaseReady && aiReady && embeddingProfileReady
         ? Results.Ok(new
@@ -162,7 +180,7 @@ app.MapGet("/ready", async (
             service = "icehott-api",
             database = "ready",
             aiRuntime = "ready",
-            embeddingProfile = embeddingProvider.Profile.Key,
+            embeddingProfile = profile?.Key,
             embeddingProfileReady = true
         })
         : Results.Json(
@@ -172,7 +190,7 @@ app.MapGet("/ready", async (
                 service = "icehott-api",
                 database = databaseReady ? "ready" : "unavailable",
                 aiRuntime = aiReady ? "ready" : "unavailable",
-                embeddingProfile = embeddingProvider.Profile.Key,
+                embeddingProfile = profile?.Key,
                 embeddingProfileReady
             },
             statusCode: StatusCodes.Status503ServiceUnavailable);

@@ -7,7 +7,8 @@ namespace ICEHOTT.Application.Knowledge;
 public sealed class KnowledgeIndexingProcessor(
     IKnowledgeRepository knowledge,
     IKnowledgeChunker chunker,
-    IEmbeddingProvider embeddings,
+    IServingEmbeddingProfileResolver servingProfiles,
+    IEmbeddingProviderRegistry embeddingProviders,
     IVectorStore vectorStore,
     IUnitOfWork unitOfWork,
     TimeProvider clock)
@@ -35,8 +36,11 @@ public sealed class KnowledgeIndexingProcessor(
                 return 0;
             }
 
-            var configuredProfile = embeddings.Profile;
+            var configuredProfile = await servingProfiles.ResolveAsync(cancellationToken);
             configuredProfile.Validate();
+
+            var provider = embeddingProviders.Resolve(configuredProfile.Provider);
+            provider.Capabilities.ValidateProfile(configuredProfile);
 
             document.MarkProcessing();
             await unitOfWork.SaveChangesAsync(cancellationToken);
@@ -46,6 +50,7 @@ public sealed class KnowledgeIndexingProcessor(
                 throw new InvalidOperationException("Knowledge document produced no indexable chunks.");
 
             var embedded = await EmbedInBatchesAsync(
+                provider,
                 configuredProfile,
                 chunkTexts,
                 cancellationToken);
@@ -105,18 +110,23 @@ public sealed class KnowledgeIndexingProcessor(
         }
     }
 
-    private async Task<EmbeddingBatch> EmbedInBatchesAsync(
+    private static async Task<EmbeddingBatch> EmbedInBatchesAsync(
+        IEmbeddingProvider provider,
         EmbeddingProfileDescriptor expectedProfile,
         IReadOnlyList<string> texts,
         CancellationToken cancellationToken)
     {
-        const int batchSize = 64;
+        var batchSize = Math.Clamp(provider.Capabilities.MaxBatchInputs, 1, 256);
         var output = new List<IReadOnlyList<float>>(texts.Count);
 
         for (var start = 0; start < texts.Count; start += batchSize)
         {
             var batch = texts.Skip(start).Take(batchSize).ToArray();
-            var reply = await embeddings.EmbedAsync(batch, cancellationToken);
+            var reply = await provider.EmbedAsync(
+                expectedProfile,
+                EmbeddingPurpose.Document,
+                batch,
+                cancellationToken);
 
             if (reply.Embeddings.Count != batch.Length)
                 throw new EmbeddingProviderException(

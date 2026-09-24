@@ -4,7 +4,8 @@ using ICEHOTT.Application.Abstractions;
 namespace ICEHOTT.Application.Knowledge;
 
 public sealed class KnowledgeRetriever(
-    IEmbeddingProvider embeddings,
+    IServingEmbeddingProfileResolver servingProfiles,
+    IEmbeddingProviderRegistry embeddingProviders,
     IVectorStore vectorStore,
     IRagReranker reranker,
     IRetrievedContentPolicy contentPolicy) : IKnowledgeRetriever
@@ -19,8 +20,11 @@ public sealed class KnowledgeRetriever(
         if (string.IsNullOrWhiteSpace(normalizedQuery))
             return new([], 0, 0);
 
-        var profile = embeddings.Profile;
+        var profile = await servingProfiles.ResolveAsync(cancellationToken);
         profile.Validate();
+
+        var provider = embeddingProviders.Resolve(profile.Provider);
+        provider.Capabilities.ValidateProfile(profile);
 
         var finalLimit = Math.Clamp(limit, 1, 10);
         var candidateLimit = Math.Clamp(finalLimit * 4, 8, 30);
@@ -34,7 +38,11 @@ public sealed class KnowledgeRetriever(
 
         RagTelemetry.RetrievalRequests.Add(1);
 
-        var embeddingBatch = await embeddings.EmbedAsync([normalizedQuery], cancellationToken);
+        var embeddingBatch = await provider.EmbedAsync(
+            profile,
+            EmbeddingPurpose.Query,
+            [normalizedQuery],
+            cancellationToken);
         if (embeddingBatch.Embeddings.Count != 1)
             throw new EmbeddingProviderException(
                 "Embedding provider returned an invalid query batch.",
