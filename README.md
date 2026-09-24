@@ -73,6 +73,16 @@ ICEHOTT is a production-oriented AI workspace for agentic work: knowledge, tools
 - Database and AI-runtime readiness checks
 - Queued/Processing polling and reindex UX in the dashboard
 
+### Phase 3.6A — Semantic RAG Foundation
+- Versioned embedding profiles with explicit lifecycle and dimensions
+- Profile-aware pgvector storage and retrieval
+- Existing 64-dimensional vectors preserved through profile backfill
+- Profile-scoped HNSW serving index
+- Single Active profile database invariant
+- Readiness checks for profile metadata plus compatible HNSW index
+- Versioned deterministic RAG evaluation dataset and metrics
+- Production semantic provider intentionally deferred to Phase 3.6B
+
 ## Architecture
 
 ```text
@@ -146,4 +156,4 @@ The merge gate requires:
 - EF migration script validation
 - migration application to pgvector/PostgreSQL in GitHub Actions
 
-See [Phase 1](docs/PHASE-1-IDENTITY-WORKSPACES.md), [Phase 2](docs/PHASE-2-AGENT-RUNTIME.md), [Phase 3](docs/PHASE-3-KNOWLEDGE-RAG.md), [Phase 3.5](docs/PHASE-3.5-PRODUCTION-RAG-HARDENING.md), [Phase 3.6 architecture freeze](docs/PHASE-3.6-ARCHITECTURE-FREEZE.md), [Multi-agent engineering roadmap](docs/MULTI-AGENT-ENGINEERING-ROADMAP.md), [API contract](docs/API.md), [Architecture](docs/ARCHITECTURE.md), and [Security](docs/SECURITY.md).
+See [Phase 1](docs/PHASE-1-IDENTITY-WORKSPACES.md), [Phase 2](docs/PHASE-2-AGENT-RUNTIME.md), [Phase 3](docs/PHASE-3-KNOWLEDGE-RAG.md), [Phase 3.5](docs/PHASE-3.5-PRODUCTION-RAG-HARDENING.md), [Phase 3.6 architecture freeze](docs/PHASE-3.6-ARCHITECTURE-FREEZE.md), [Phase 3.6A semantic foundation](docs/PHASE-3.6A-SEMANTIC-FOUNDATION.md), [Multi-agent engineering roadmap](docs/MULTI-AGENT-ENGINEERING-ROADMAP.md), [API contract](docs/API.md), [Architecture](docs/ARCHITECTURE.md), and [Security](docs/SECURITY.md).

@@ -123,7 +123,8 @@ public sealed class KnowledgeIngestionWorker(
             var error = exception.GetType().Name + ": " + exception.Message;
             var unitOfWork = processingScope.ServiceProvider.GetRequiredService<IUnitOfWork>();
 
-            if (lease.Attempts >= lease.MaxAttempts)
+            var retryable = IsRetryable(exception);
+            if (!retryable || lease.Attempts >= lease.MaxAttempts)
             {
                 var failed = await queue.FailAsync(
                     lease.Id,
@@ -149,7 +150,9 @@ public sealed class KnowledgeIngestionWorker(
 
                 logger.LogError(
                     exception,
-                    "Knowledge job {JobId} permanently failed after {Attempts} attempts.",
+                    retryable
+                        ? "Knowledge job {JobId} permanently failed after {Attempts} attempts."
+                        : "Knowledge job {JobId} failed with a non-retryable provider/vector configuration error on attempt {Attempts}.",
                     lease.Id,
                     lease.Attempts);
                 return;
@@ -192,6 +195,14 @@ public sealed class KnowledgeIngestionWorker(
                 lease.MaxAttempts);
         }
     }
+
+    private static bool IsRetryable(Exception exception) =>
+        exception switch
+        {
+            EmbeddingProviderException embeddingException => embeddingException.IsRetryable,
+            VectorStoreUnavailableException vectorException => vectorException.IsRetryable,
+            _ => true
+        };
 
     private async Task RenewLeaseLoopAsync(
         Guid jobId,

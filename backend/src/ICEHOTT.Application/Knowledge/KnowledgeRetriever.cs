@@ -19,6 +19,9 @@ public sealed class KnowledgeRetriever(
         if (string.IsNullOrWhiteSpace(normalizedQuery))
             return new([], 0, 0);
 
+        var profile = embeddings.Profile;
+        profile.Validate();
+
         var finalLimit = Math.Clamp(limit, 1, 10);
         var candidateLimit = Math.Clamp(finalLimit * 4, 8, 30);
         var stopwatch = Stopwatch.StartNew();
@@ -27,15 +30,25 @@ public sealed class KnowledgeRetriever(
         activity?.SetTag("workspace.id", workspaceId);
         activity?.SetTag("rag.limit", finalLimit);
         activity?.SetTag("rag.candidate_limit", candidateLimit);
+        SetProfileTags(activity, profile);
 
         RagTelemetry.RetrievalRequests.Add(1);
 
         var embeddingBatch = await embeddings.EmbedAsync([normalizedQuery], cancellationToken);
         if (embeddingBatch.Embeddings.Count != 1)
-            throw new InvalidOperationException("Embedding provider returned an invalid query batch.");
+            throw new EmbeddingProviderException(
+                "Embedding provider returned an invalid query batch.",
+                EmbeddingFailureKind.ProfileMismatch);
+
+        if (embeddingBatch.Profile != profile ||
+            embeddingBatch.Embeddings[0].Count != profile.Dimensions)
+            throw new EmbeddingProviderException(
+                "Query embedding did not match the configured embedding profile.",
+                EmbeddingFailureKind.ProfileMismatch);
 
         var candidates = await vectorStore.SearchAsync(
             workspaceId,
+            profile,
             normalizedQuery,
             embeddingBatch.Embeddings[0],
             candidateLimit,
@@ -72,9 +85,20 @@ public sealed class KnowledgeRetriever(
         activity?.SetTag("rag.candidates", candidates.Count);
         activity?.SetTag("rag.filtered", filtered);
         activity?.SetTag("rag.results", reranked.Count);
-        activity?.SetTag("embedding.provider", embeddingBatch.Provider);
-        activity?.SetTag("embedding.model", embeddingBatch.Model);
 
         return new(reranked, candidates.Count, filtered);
+    }
+
+    private static void SetProfileTags(
+        Activity? activity,
+        EmbeddingProfileDescriptor profile)
+    {
+        activity?.SetTag("embedding.profile_id", profile.Id);
+        activity?.SetTag("embedding.profile", profile.Key);
+        activity?.SetTag("embedding.provider", profile.Provider);
+        activity?.SetTag("embedding.model", profile.Model);
+        activity?.SetTag("embedding.version", profile.Version);
+        activity?.SetTag("embedding.index_version", profile.IndexVersion);
+        activity?.SetTag("embedding.dimensions", profile.Dimensions);
     }
 }

@@ -86,6 +86,147 @@ public sealed class RagHardeningTests
         Assert.Null(job.CompletedAtUtc);
     }
 
+    [Fact]
+    public void Embedding_Profile_Default_Is_Valid_And_Versioned()
+    {
+        var profile = EmbeddingProfileDefaults.LocalDeterministic64;
+
+        profile.Validate();
+
+        Assert.Equal(64, profile.Dimensions);
+        Assert.Equal(1, profile.IndexVersion);
+        Assert.False(string.IsNullOrWhiteSpace(profile.Key));
+        Assert.False(string.IsNullOrWhiteSpace(profile.Version));
+    }
+
+    [Fact]
+    public void Embedding_Failure_Retryability_Is_Explicit()
+    {
+        var transient = new EmbeddingProviderException(
+            "temporary",
+            EmbeddingFailureKind.Transient);
+        var mismatch = new EmbeddingProviderException(
+            "profile mismatch",
+            EmbeddingFailureKind.ProfileMismatch);
+
+        Assert.True(transient.IsRetryable);
+        Assert.False(mismatch.IsRetryable);
+    }
+
+    [Fact]
+    public void Embedding_Profile_Lifecycle_Is_Explicit()
+    {
+        var createdAt = DateTimeOffset.UtcNow;
+        var profile = new EmbeddingProfile(
+            Guid.NewGuid(),
+            "semantic-v2",
+            "provider",
+            "model",
+            768,
+            "2",
+            2,
+            "cosine",
+            "unit",
+            EmbeddingProfileStatus.Building,
+            createdAt);
+
+        Assert.Equal(EmbeddingProfileStatus.Building, profile.Status);
+        Assert.Null(profile.ActivatedAtUtc);
+
+        profile.Activate(createdAt.AddMinutes(1));
+        Assert.Equal(EmbeddingProfileStatus.Active, profile.Status);
+        Assert.NotNull(profile.ActivatedAtUtc);
+
+        profile.Retire();
+        Assert.Equal(EmbeddingProfileStatus.Retired, profile.Status);
+    }
+
+    [Fact]
+    public void Embedding_Profile_Rejects_Invalid_Lifecycle_Transitions()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var profile = new EmbeddingProfile(
+            Guid.NewGuid(),
+            "semantic-v2",
+            "provider",
+            "model",
+            768,
+            "2",
+            2,
+            "cosine",
+            "unit",
+            EmbeddingProfileStatus.Building,
+            now);
+
+        profile.Activate(now.AddMinutes(1));
+
+        Assert.Throws<InvalidOperationException>(
+            () => profile.Activate(now.AddMinutes(2)));
+        Assert.Throws<InvalidOperationException>(
+            () => profile.MarkFailed());
+
+        profile.Retire();
+
+        Assert.Throws<InvalidOperationException>(
+            () => profile.Activate(now.AddMinutes(3)));
+        Assert.Throws<InvalidOperationException>(
+            () => profile.Retire());
+    }
+
+    [Fact]
+    public void Embedding_Profile_Rejects_Dimensions_Outside_Pgvector_Vector_Limit()
+    {
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            new EmbeddingProfile(
+                Guid.NewGuid(),
+                "too-large",
+                "provider",
+                "model",
+                16001,
+                "1",
+                1,
+                "cosine",
+                "unit",
+                EmbeddingProfileStatus.Building,
+                DateTimeOffset.UtcNow));
+
+        var descriptor = EmbeddingProfileDefaults.LocalDeterministic64 with
+        {
+            Dimensions = 16001
+        };
+
+        Assert.Throws<InvalidOperationException>(descriptor.Validate);
+    }
+
+    [Fact]
+    public void Evaluation_Metrics_Treat_Empty_Expected_Result_As_Success_Only_When_No_Result_Is_Returned()
+    {
+        var success = RagEvaluationMetrics.Summarize(
+        [
+            new RagEvaluationObservation(
+                "safe-filter",
+                [],
+                [],
+                CitationCorrect: true,
+                TenantLeakage: false)
+        ]);
+
+        var failure = RagEvaluationMetrics.Summarize(
+        [
+            new RagEvaluationObservation(
+                "safe-filter",
+                [],
+                ["unexpected.txt"],
+                CitationCorrect: false,
+                TenantLeakage: false)
+        ]);
+
+        Assert.Equal(1, success.HitRateAtK);
+        Assert.Equal(1, success.MeanPrecisionAtK);
+        Assert.Equal(0, failure.HitRateAtK);
+        Assert.Equal(0, failure.MeanPrecisionAtK);
+    }
+
     private static KnowledgeMatch Match(Guid documentId, string content, double score) =>
         new(
             Guid.NewGuid(),

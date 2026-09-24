@@ -106,25 +106,35 @@ public sealed class IcehottApiFactory : WebApplicationFactory<Program>
 
     private sealed class FakeEmbeddingProvider(IAiRuntimeClient runtime) : IEmbeddingProvider
     {
+        public EmbeddingProfileDescriptor Profile { get; } =
+            EmbeddingProfileDefaults.LocalDeterministic64;
+
         public async Task<EmbeddingBatch> EmbedAsync(
             IReadOnlyList<string> texts,
             CancellationToken cancellationToken = default)
         {
             var reply = await runtime.EmbedAsync(texts, cancellationToken);
-            return new EmbeddingBatch(reply.Dimensions, reply.Embeddings, "test-runtime", "test-embedding");
+            return new EmbeddingBatch(Profile, reply.Embeddings);
         }
     }
 
     private sealed class FakeVectorStore(ICEHOTTDbContext db) : IVectorStore
     {
+        public Task<bool> IsProfileReadyAsync(
+            EmbeddingProfileDescriptor profile,
+            CancellationToken cancellationToken = default) =>
+            Task.FromResult(profile == EmbeddingProfileDefaults.LocalDeterministic64);
+
         public Task StoreManyAsync(
             Guid workspaceId,
+            EmbeddingProfileDescriptor profile,
             IReadOnlyList<VectorEmbedding> embeddings,
             CancellationToken cancellationToken = default) =>
             Task.CompletedTask;
 
         public async Task<IReadOnlyList<KnowledgeMatch>> SearchAsync(
             Guid workspaceId,
+            EmbeddingProfileDescriptor profile,
             string queryText,
             IReadOnlyList<float> queryEmbedding,
             int limit,
@@ -138,17 +148,33 @@ public sealed class IcehottApiFactory : WebApplicationFactory<Program>
                 .Where(x => x.WorkspaceId == workspaceId)
                 .ToListAsync(cancellationToken);
 
+            var stopWords = new HashSet<string>(
+                ["the", "and", "for", "are", "what", "how", "long", "with", "from", "that", "this", "into"],
+                StringComparer.OrdinalIgnoreCase);
+
+            var terms = queryText
+                .Split(new[] { ' ', '\t', '\r', '\n', '.', ',', '?', '!', ':', ';' },
+                    StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .Where(term => term.Length >= 3 && !stopWords.Contains(term))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+
             var matches = (
                 from chunk in chunks
                 join document in documents on chunk.DocumentId equals document.Id
-                orderby chunk.Ordinal
+                let termHits = terms.Count(term =>
+                    chunk.Content.Contains(term, StringComparison.OrdinalIgnoreCase))
+                let score = termHits == 0
+                    ? 0.05
+                    : Math.Min(0.99, 0.55 + termHits * 0.12)
+                orderby score descending, chunk.Ordinal
                 select new KnowledgeMatch(
                     chunk.Id,
                     document.Id,
                     document.Title,
                     document.SourceName,
                     chunk.Content,
-                    0.95))
+                    score))
                 .Take(Math.Clamp(limit, 1, 30))
                 .ToArray();
 

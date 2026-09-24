@@ -35,6 +35,9 @@ public sealed class KnowledgeIndexingProcessor(
                 return 0;
             }
 
+            var configuredProfile = embeddings.Profile;
+            configuredProfile.Validate();
+
             document.MarkProcessing();
             await unitOfWork.SaveChangesAsync(cancellationToken);
 
@@ -42,12 +45,13 @@ public sealed class KnowledgeIndexingProcessor(
             if (chunkTexts.Count == 0)
                 throw new InvalidOperationException("Knowledge document produced no indexable chunks.");
 
-            var embedded = await EmbedInBatchesAsync(chunkTexts, cancellationToken);
-            if (embedded.Vectors.Count != chunkTexts.Count)
+            var embedded = await EmbedInBatchesAsync(
+                configuredProfile,
+                chunkTexts,
+                cancellationToken);
+
+            if (embedded.Embeddings.Count != chunkTexts.Count)
                 throw new InvalidOperationException("Embedding count did not match chunk count.");
-            if (embedded.Dimensions != 64)
-                throw new InvalidOperationException(
-                    $"Embedding provider returned {embedded.Dimensions} dimensions; ICEHOTT expects 64.");
 
             var now = clock.GetUtcNow();
             var chunks = chunkTexts
@@ -70,11 +74,12 @@ public sealed class KnowledgeIndexingProcessor(
 
             var vectorEmbeddings = chunks
                 .Select((chunk, index) =>
-                    new VectorEmbedding(chunk.Id, embedded.Vectors[index]))
+                    new VectorEmbedding(chunk.Id, embedded.Embeddings[index]))
                 .ToArray();
 
             await vectorStore.StoreManyAsync(
                 workspaceId,
+                embedded.Profile,
                 vectorEmbeddings,
                 cancellationToken);
 
@@ -85,9 +90,7 @@ public sealed class KnowledgeIndexingProcessor(
             RagTelemetry.IndexingDurationMs.Record(stopwatch.Elapsed.TotalMilliseconds);
             RagTelemetry.IndexedChunks.Record(chunks.LongLength);
             activity?.SetTag("rag.chunk_count", chunks.Length);
-            activity?.SetTag("embedding.provider", embedded.Provider);
-            activity?.SetTag("embedding.model", embedded.Model);
-            activity?.SetTag("embedding.dimensions", embedded.Dimensions);
+            SetProfileTags(activity, embedded.Profile);
             activity?.SetStatus(ActivityStatusCode.Ok);
 
             return chunks.Length;
@@ -102,15 +105,13 @@ public sealed class KnowledgeIndexingProcessor(
         }
     }
 
-    private async Task<EmbeddedContent> EmbedInBatchesAsync(
+    private async Task<EmbeddingBatch> EmbedInBatchesAsync(
+        EmbeddingProfileDescriptor expectedProfile,
         IReadOnlyList<string> texts,
         CancellationToken cancellationToken)
     {
         const int batchSize = 64;
         var output = new List<IReadOnlyList<float>>(texts.Count);
-        int? dimensions = null;
-        string? provider = null;
-        string? model = null;
 
         for (var start = 0; start < texts.Count; start += batchSize)
         {
@@ -118,34 +119,37 @@ public sealed class KnowledgeIndexingProcessor(
             var reply = await embeddings.EmbedAsync(batch, cancellationToken);
 
             if (reply.Embeddings.Count != batch.Length)
-                throw new InvalidOperationException(
-                    "Embedding provider returned a different batch size.");
+                throw new EmbeddingProviderException(
+                    "Embedding provider returned a different batch size.",
+                    EmbeddingFailureKind.ProfileMismatch);
 
-            dimensions ??= reply.Dimensions;
-            provider ??= reply.Provider;
-            model ??= reply.Model;
+            reply.Profile.Validate();
+            if (reply.Profile != expectedProfile)
+                throw new EmbeddingProviderException(
+                    "Embedding profile changed during document indexing.",
+                    EmbeddingFailureKind.ProfileMismatch);
 
-            if (reply.Dimensions != dimensions)
-                throw new InvalidOperationException(
-                    "Embedding dimensions changed between batches.");
-            if (!string.Equals(reply.Provider, provider, StringComparison.Ordinal) ||
-                !string.Equals(reply.Model, model, StringComparison.Ordinal))
-                throw new InvalidOperationException(
-                    "Embedding provider/model changed between batches.");
+            if (reply.Embeddings.Any(vector => vector.Count != expectedProfile.Dimensions))
+                throw new EmbeddingProviderException(
+                    $"Embedding vector dimensions did not match profile {expectedProfile.Key}.",
+                    EmbeddingFailureKind.ProfileMismatch);
 
             output.AddRange(reply.Embeddings);
         }
 
-        return new EmbeddedContent(
-            output,
-            dimensions ?? 0,
-            provider ?? "unknown",
-            model ?? "unknown");
+        return new EmbeddingBatch(expectedProfile, output);
     }
 
-    private sealed record EmbeddedContent(
-        IReadOnlyList<IReadOnlyList<float>> Vectors,
-        int Dimensions,
-        string Provider,
-        string Model);
+    private static void SetProfileTags(
+        Activity? activity,
+        EmbeddingProfileDescriptor profile)
+    {
+        activity?.SetTag("embedding.profile_id", profile.Id);
+        activity?.SetTag("embedding.profile", profile.Key);
+        activity?.SetTag("embedding.provider", profile.Provider);
+        activity?.SetTag("embedding.model", profile.Model);
+        activity?.SetTag("embedding.version", profile.Version);
+        activity?.SetTag("embedding.index_version", profile.IndexVersion);
+        activity?.SetTag("embedding.dimensions", profile.Dimensions);
+    }
 }

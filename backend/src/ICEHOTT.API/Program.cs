@@ -140,18 +140,27 @@ app.MapHealthChecks("/health");
 app.MapGet("/ready", async (
     ICEHOTTDbContext db,
     IAiRuntimeClient aiRuntimeClient,
+    IEmbeddingProvider embeddingProvider,
+    IVectorStore vectorStore,
     CancellationToken cancellationToken) =>
 {
     var databaseReady = await db.Database.CanConnectAsync(cancellationToken);
     var aiReady = await aiRuntimeClient.IsReadyAsync(cancellationToken);
+    var embeddingProfileReady =
+        databaseReady &&
+        await vectorStore.IsProfileReadyAsync(
+            embeddingProvider.Profile,
+            cancellationToken);
 
-    return databaseReady && aiReady
+    return databaseReady && aiReady && embeddingProfileReady
         ? Results.Ok(new
         {
             status = "ready",
             service = "icehott-api",
             database = "ready",
-            aiRuntime = "ready"
+            aiRuntime = "ready",
+            embeddingProfile = embeddingProvider.Profile.Key,
+            embeddingProfileReady = true
         })
         : Results.Json(
             new
@@ -159,7 +168,9 @@ app.MapGet("/ready", async (
                 status = "not_ready",
                 service = "icehott-api",
                 database = databaseReady ? "ready" : "unavailable",
-                aiRuntime = aiReady ? "ready" : "unavailable"
+                aiRuntime = aiReady ? "ready" : "unavailable",
+                embeddingProfile = embeddingProvider.Profile.Key,
+                embeddingProfileReady
             },
             statusCode: StatusCodes.Status503ServiceUnavailable);
 });

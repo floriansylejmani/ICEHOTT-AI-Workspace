@@ -50,7 +50,7 @@ EmbeddingProfile
 
 The exact persistence entity can be adjusted during implementation, but these semantics are frozen.
 
-Only one profile/index version is considered the active serving profile for a workspace/index scope at a time.
+Phase 3.6A enforces one deployment-wide Active profile. Phase 3.6B may generalize activation scope only if product requirements require per-workspace profiles. In every scope, only one profile/index version may serve as Active at a time.
 
 ## 4. Chunk embedding identity
 
@@ -211,8 +211,7 @@ Add versioned repository data, for example:
 
 ```text
 evals/rag/v1/
-  dataset.jsonl
-  documents/
+  dataset.json
   README.md
 ```
 

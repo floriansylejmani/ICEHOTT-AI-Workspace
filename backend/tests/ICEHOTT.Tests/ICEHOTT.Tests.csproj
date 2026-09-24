@@ -29,4 +29,10 @@
     <ProjectReference Include="..\..\src\ICEHOTT.Persistence\ICEHOTT.Persistence.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <Content Include="..\..\..\evals\rag\v1\dataset.json"
+             Link="evals\rag\v1\dataset.json"
+             CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
 </Project>
