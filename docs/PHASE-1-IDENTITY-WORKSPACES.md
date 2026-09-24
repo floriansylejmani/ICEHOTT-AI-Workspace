@@ -2,7 +2,7 @@
 
 ## Status
 
-Implementation complete on `feature/phase-1-identity-workspaces`. Merge requires a green GitHub Actions gate.
+Phase 1 is complete and merged into `main` after a green GitHub Actions gate.
 
 ## Goal
 
@@ -48,7 +48,7 @@ Build the first production-oriented vertical slice for ICEHOTT: secure identity,
 - [x] Backend integration tests pass locally.
 - [x] Frontend tests, lint, and production build pass locally.
 - [x] API and architecture docs are updated.
-- [ ] Final branch CI is green before merge.
+- [x] Final branch CI is green before merge.
 
 ## Non-goals
 
@@ -94,4 +94,4 @@ Local Docker Desktop requires elevated Windows service access on the current mac
 
 ## Next phase
 
-Phase 2 begins only after this branch is merged green. Phase 2 scope: AI chat runtime, streaming, conversation persistence, and model-provider abstraction. Tool execution and RAG remain later phases.
+Phase 1 is merged green. Phase 2 scope is AI chat runtime, streaming, conversation persistence, and model-provider abstraction. Tool execution and RAG remain later phases.
