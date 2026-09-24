@@ -17,7 +17,12 @@ jobs:
         with:
           dotnet-version: 9.0.x
       - run: dotnet restore backend/ICEHOTT.sln
+      - run: dotnet tool restore
       - run: dotnet build backend/ICEHOTT.sln -c Release --no-restore
+      - name: Validate PostgreSQL migration script
+        env:
+          ASPNETCORE_ENVIRONMENT: Development
+        run: dotnet ef migrations script --project backend/src/ICEHOTT.Persistence/ICEHOTT.Persistence.csproj --startup-project backend/src/ICEHOTT.API/ICEHOTT.API.csproj --idempotent --output migration.sql
       - run: dotnet test backend/ICEHOTT.sln -c Release --no-build
 
   frontend:

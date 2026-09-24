@@ -54,3 +54,29 @@ Tenant isolation is a blocking requirement. Every workspace-owned resource must 
 6. Integration tests for tenant isolation
 7. Minimal frontend auth shell
 8. CI and documentation gate
+
+## Phase 1A implementation status
+
+Completed:
+- User, workspace, membership, and refresh-session domain model
+- PostgreSQL EF Core persistence model and initial migration
+- Password hashing with ASP.NET Core PasswordHasher
+- Short-lived JWT access tokens
+- HttpOnly refresh-token cookie with server-side hash storage
+- Refresh-token rotation and replay rejection
+- Register, login, refresh, and current-user endpoints
+- Workspace create/list/get endpoints
+- Server-side tenant isolation
+- SQLite-backed API integration test harness
+- CI validation for PostgreSQL migration SQL generation
+
+Validation evidence:
+- .NET build: 0 warnings, 0 errors
+- Backend tests: 6 passed, 0 failed
+- Frontend lint/build: passed
+- AI tests: passed
+- Docker Compose configuration: valid
+- PostgreSQL migration SQL generation: passed
+
+Environment note:
+- Docker runtime smoke test is pending because Docker Desktop's Linux engine was not available during this run. This is an environment gate, not a code/test failure.

@@ -31,6 +31,9 @@ services:
       dockerfile: backend/Dockerfile
     environment:
       ASPNETCORE_ENVIRONMENT: Development
+      ConnectionStrings__DefaultConnection: Host=postgres;Port=5432;Database=${POSTGRES_DB:-icehott};Username=${POSTGRES_USER:-icehott};Password=${POSTGRES_PASSWORD:-change-me}
+      Jwt__Key: ${JWT_SECRET_KEY:-ICEHOTT-development-only-key-never-use-in-production-2026}
+      Cors__AllowedOrigins__0: http://localhost:3000
     ports:
       - "5050:8080"
     depends_on:
