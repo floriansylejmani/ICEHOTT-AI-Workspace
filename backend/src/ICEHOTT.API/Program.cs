@@ -58,6 +58,9 @@ builder.Services.AddScoped<IConversationRepository, ConversationRepository>();
 builder.Services.AddScoped<IKnowledgeRepository, KnowledgeRepository>();
 builder.Services.AddScoped<IKnowledgeJobQueue, KnowledgeJobQueue>();
 builder.Services.AddScoped<IVectorStore, PostgresVectorStore>();
+builder.Services.AddScoped<IEmbeddingProfileRepository, EmbeddingProfileRepository>();
+builder.Services.AddScoped<IServingEmbeddingProfileResolver, ServingEmbeddingProfileResolver>();
+builder.Services.AddScoped<IBuildEmbeddingProfileResolver, BuildEmbeddingProfileResolver>();
 builder.Services.AddScoped<IUnitOfWork>(sp => sp.GetRequiredService<ICEHOTTDbContext>());
 
 builder.Services.AddSingleton<IPasswordService, PasswordService>();
