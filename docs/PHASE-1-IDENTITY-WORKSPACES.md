@@ -76,7 +76,9 @@ Local validation:
 - Next.js production build: **passed**
 - AI tests: **passed**
 - Docker Compose syntax: **valid**
-- npm audit at dependency-install time: **0 vulnerabilities**
+- NuGet vulnerability scan: **0 known vulnerabilities**
+- npm audit: **0 vulnerabilities**
+- pip-audit: **0 known vulnerabilities**
 
 CI validation:
 - Generates an idempotent EF migration script.
