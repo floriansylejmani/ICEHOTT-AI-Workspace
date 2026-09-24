@@ -1,9 +1,9 @@
 namespace ICEHOTT.Domain.Knowledge;
 
-public enum KnowledgeDocumentStatus
+public enum KnowledgeProcessingStatus
 {
     Queued = 1,
     Processing = 2,
-    Ready = 3,
+    Completed = 3,
     Failed = 4
 }

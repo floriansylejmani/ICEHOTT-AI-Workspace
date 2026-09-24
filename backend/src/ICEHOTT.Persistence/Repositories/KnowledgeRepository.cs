@@ -6,13 +6,33 @@ namespace ICEHOTT.Persistence.Repositories;
 
 public sealed class KnowledgeRepository(ICEHOTTDbContext db) : IKnowledgeRepository
 {
+    public async Task AddDocumentAsync(
+        KnowledgeDocument document,
+        CancellationToken cancellationToken = default) =>
+        await db.KnowledgeDocuments.AddAsync(document, cancellationToken);
+
     public async Task AddAsync(
         KnowledgeDocument document,
         IReadOnlyList<KnowledgeChunk> chunks,
         CancellationToken cancellationToken = default)
     {
         await db.KnowledgeDocuments.AddAsync(document, cancellationToken);
-        await db.KnowledgeChunks.AddRangeAsync(chunks, cancellationToken);
+        if (chunks.Count > 0)
+            await db.KnowledgeChunks.AddRangeAsync(chunks, cancellationToken);
+    }
+
+    public async Task ReplaceChunksAsync(
+        Guid workspaceId,
+        Guid documentId,
+        IReadOnlyList<KnowledgeChunk> chunks,
+        CancellationToken cancellationToken = default)
+    {
+        var existing = await db.KnowledgeChunks
+            .Where(x => x.WorkspaceId == workspaceId && x.DocumentId == documentId)
+            .ToListAsync(cancellationToken);
+
+        if (existing.Count > 0) db.KnowledgeChunks.RemoveRange(existing);
+        if (chunks.Count > 0) await db.KnowledgeChunks.AddRangeAsync(chunks, cancellationToken);
     }
 
     public async Task<IReadOnlyList<KnowledgeDocument>> ListDocumentsAsync(

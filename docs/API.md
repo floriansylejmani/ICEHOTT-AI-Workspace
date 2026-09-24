@@ -144,7 +144,7 @@ Request:
 }
 ```
 
-The API validates the request, chunks the text, requests embeddings from FastAPI in batches, stores document/chunk metadata in PostgreSQL, and stores 64-dimensional vectors in pgvector. A document is marked `Ready` only after vector indexing succeeds.
+The API validates the request, persists the document as `Queued`, creates or reuses its durable processing job, and returns `202 Accepted`. A background worker later leases the job, chunks the content, requests embeddings in batches, stores document/chunk metadata in PostgreSQL, and writes vectors to pgvector. The document becomes `Ready` only after indexing succeeds.
 
 ### POST `/api/workspaces/{workspaceId}/knowledge/documents/upload`
 
@@ -155,13 +155,17 @@ Accepts `multipart/form-data` with:
 
 Supported extensions are PDF, DOCX, TXT, MD, CSV, and JSON. Extraction runs server-side. Upload size is limited to 10 MB and the original filename is reduced to its safe base filename before persistence.
 
+### POST `/api/workspaces/{workspaceId}/knowledge/documents/{documentId}/reindex`
+
+Queues a new indexing attempt for a `Ready` or `Failed` document and returns `202 Accepted`. Calling reindex while the document is already `Queued` or `Processing` is idempotent and does not create duplicate work.
+
 ### DELETE `/api/workspaces/{workspaceId}/knowledge/documents/{documentId}`
 
-Deletes a document belonging to the active workspace. Related chunks and pgvector rows are removed through database cascades.
+Deletes a document belonging to the active workspace. Related processing jobs, chunks, and pgvector rows are removed through database cascades.
 
 ### GET `/api/workspaces/{workspaceId}/knowledge/search?query=...&limit=5`
 
-Embeds the query and performs workspace-filtered hybrid retrieval: 80% cosine vector similarity plus 20% PostgreSQL lexical ranking. The maximum result limit is 10.
+Embeds the query and performs workspace-filtered hybrid retrieval. PostgreSQL produces a wider semantic + lexical candidate set, low-score and unsafe retrieved-content candidates are filtered, then a deterministic reranker applies query coverage / phrase boosts and document diversification before returning the final result set. The maximum final result limit is 10.
 
 Representative knowledge errors:
 - `title_required`

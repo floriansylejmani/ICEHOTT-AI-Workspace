@@ -30,6 +30,8 @@ public interface IAiRuntimeClient
     Task<AiEmbeddingReply> EmbedAsync(
         IReadOnlyList<string> texts,
         CancellationToken cancellationToken = default);
+
+    Task<bool> IsReadyAsync(CancellationToken cancellationToken = default);
 }
 
 public sealed class AiRuntimeUnavailableException(string message, Exception? innerException = null)

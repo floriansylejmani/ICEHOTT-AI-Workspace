@@ -6,7 +6,7 @@ namespace ICEHOTT.Application.Agents;
 public sealed class AgentService(
     IWorkspaceRepository workspaces,
     IConversationRepository conversations,
-    IVectorStore vectorStore,
+    IKnowledgeRetriever retriever,
     IAiRuntimeClient aiRuntime,
     IUnitOfWork unitOfWork,
     TimeProvider clock)
@@ -87,18 +87,12 @@ public sealed class AgentService(
         conversation.Touch(now);
         await unitOfWork.SaveChangesAsync(cancellationToken);
 
-        var embeddingReply = await aiRuntime.EmbedAsync([normalizedContent], cancellationToken);
-        if (embeddingReply.Embeddings.Count != 1)
-            throw new AiRuntimeUnavailableException("AI runtime returned an invalid query embedding.");
-
-        var matches = (await vectorStore.SearchAsync(
-                workspaceId,
-                normalizedContent,
-                embeddingReply.Embeddings[0],
-                5,
-                cancellationToken))
-            .Where(match => match.Score >= 0.15)
-            .ToArray();
+        var retrieval = await retriever.RetrieveAsync(
+            workspaceId,
+            normalizedContent,
+            5,
+            cancellationToken);
+        var matches = retrieval.Matches;
 
         var history = await conversations.ListMessagesAsync(workspaceId, conversation.Id, cancellationToken);
         var runtimeReply = await aiRuntime.ReplyAsync(

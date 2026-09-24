@@ -126,7 +126,7 @@ public sealed class PostgresVectorStore(ICEHOTTDbContext db) : IVectorStore
             AddParameter(command, "@workspaceId", workspaceId);
             AddParameter(command, "@query", queryText);
             AddParameter(command, "@embedding", FormatVector(queryEmbedding));
-            AddParameter(command, "@limit", Math.Clamp(limit, 1, 10));
+            AddParameter(command, "@limit", Math.Clamp(limit, 1, 50));
 
             var matches = new List<KnowledgeMatch>();
             await using var reader = await command.ExecuteReaderAsync(cancellationToken);

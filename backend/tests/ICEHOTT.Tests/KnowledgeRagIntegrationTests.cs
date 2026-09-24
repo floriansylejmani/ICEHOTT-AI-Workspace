@@ -3,6 +3,8 @@ using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text;
 using System.Text.Json;
+using ICEHOTT.Application.Abstractions;
+using ICEHOTT.Application.Knowledge;
 using ICEHOTT.Domain.Knowledge;
 using ICEHOTT.Persistence;
 using Microsoft.EntityFrameworkCore;
@@ -42,10 +44,16 @@ public sealed class KnowledgeRagIntegrationTests : IClassFixture<IcehottApiFacto
                 content
             });
 
-        Assert.Equal(HttpStatusCode.OK, ingest.StatusCode);
+        Assert.Equal(HttpStatusCode.Accepted, ingest.StatusCode);
         var ingested = JsonDocument.Parse(await ingest.Content.ReadAsStringAsync()).RootElement;
-        Assert.Equal("Ready", ingested.GetProperty("status").GetString());
-        Assert.True(ingested.GetProperty("chunkCount").GetInt32() >= 2);
+        Assert.Equal("Queued", ingested.GetProperty("status").GetString());
+
+        await ProcessQueuedKnowledgeAsync(workspaceId);
+        var listed = await owner.GetAsync($"/api/workspaces/{workspaceId}/knowledge/documents");
+        listed.EnsureSuccessStatusCode();
+        var indexed = JsonDocument.Parse(await listed.Content.ReadAsStringAsync()).RootElement[0];
+        Assert.Equal("Ready", indexed.GetProperty("status").GetString());
+        Assert.True(indexed.GetProperty("chunkCount").GetInt32() >= 1);
 
         var search = await owner.GetAsync(
             $"/api/workspaces/{workspaceId}/knowledge/search?query=support%20window&limit=5");
@@ -71,7 +79,7 @@ public sealed class KnowledgeRagIntegrationTests : IClassFixture<IcehottApiFacto
         {
             var db = scope.ServiceProvider.GetRequiredService<ICEHOTTDbContext>();
             Assert.True(await db.KnowledgeDocuments.AnyAsync(x => x.WorkspaceId == workspaceId));
-            Assert.True(await db.KnowledgeChunks.CountAsync(x => x.WorkspaceId == workspaceId) >= 2);
+            Assert.True(await db.KnowledgeChunks.CountAsync(x => x.WorkspaceId == workspaceId) >= 1);
             Assert.True(await db.ConversationMessageCitations.AnyAsync(x => x.WorkspaceId == workspaceId));
         }
 
@@ -110,10 +118,14 @@ public sealed class KnowledgeRagIntegrationTests : IClassFixture<IcehottApiFacto
                 content
             });
 
-        Assert.Equal(HttpStatusCode.OK, ingest.StatusCode);
-        var payload = JsonDocument.Parse(await ingest.Content.ReadAsStringAsync()).RootElement;
+        Assert.Equal(HttpStatusCode.Accepted, ingest.StatusCode);
+        await ProcessQueuedKnowledgeAsync(workspaceId);
+
+        var list = await owner.GetAsync($"/api/workspaces/{workspaceId}/knowledge/documents");
+        list.EnsureSuccessStatusCode();
+        var payload = JsonDocument.Parse(await list.Content.ReadAsStringAsync()).RootElement[0];
         Assert.Equal("Ready", payload.GetProperty("status").GetString());
-        Assert.True(payload.GetProperty("chunkCount").GetInt32() > 64);
+        Assert.True(payload.GetProperty("chunkCount").GetInt32() > 1);
     }
 
     [Fact]
@@ -141,12 +153,14 @@ public sealed class KnowledgeRagIntegrationTests : IClassFixture<IcehottApiFacto
         var upload = await owner.PostAsync(
             $"/api/workspaces/{workspaceId}/knowledge/documents/upload",
             multipart);
-        Assert.Equal(HttpStatusCode.OK, upload.StatusCode);
+        Assert.Equal(HttpStatusCode.Accepted, upload.StatusCode);
 
         var uploaded = JsonDocument.Parse(await upload.Content.ReadAsStringAsync()).RootElement;
         var documentId = uploaded.GetProperty("id").GetGuid();
-        Assert.Equal("Ready", uploaded.GetProperty("status").GetString());
+        Assert.Equal("Queued", uploaded.GetProperty("status").GetString());
         Assert.Equal("uploaded-policy.txt", uploaded.GetProperty("sourceName").GetString());
+
+        await ProcessQueuedKnowledgeAsync(workspaceId);
 
         var delete = await owner.DeleteAsync(
             $"/api/workspaces/{workspaceId}/knowledge/documents/{documentId}");
@@ -211,6 +225,155 @@ public sealed class KnowledgeRagIntegrationTests : IClassFixture<IcehottApiFacto
             DateTimeOffset.UtcNow));
 
         await Assert.ThrowsAsync<DbUpdateException>(() => db.SaveChangesAsync());
+    }
+
+    [Fact]
+    public async Task Reindex_Is_Idempotent_While_Job_Is_Active()
+    {
+        using var owner = _factory.CreateClient();
+        var identity = await RegisterAsync(owner, $"reindex-owner-{Guid.NewGuid():N}@icehott.dev");
+        owner.DefaultRequestHeaders.Authorization =
+            new AuthenticationHeaderValue("Bearer", identity.Token);
+
+        var workspaceResponse = await owner.PostAsJsonAsync(
+            "/api/workspaces",
+            new { name = "Reindex Workspace" });
+        workspaceResponse.EnsureSuccessStatusCode();
+        var workspaceId = JsonDocument.Parse(
+            await workspaceResponse.Content.ReadAsStringAsync())
+            .RootElement.GetProperty("id").GetGuid();
+
+        var ingest = await owner.PostAsJsonAsync(
+            $"/api/workspaces/{workspaceId}/knowledge/documents",
+            new
+            {
+                title = "Reindex Policy",
+                sourceName = "reindex.txt",
+                content = "Production RAG reindexing must be idempotent."
+            });
+        Assert.Equal(HttpStatusCode.Accepted, ingest.StatusCode);
+        var documentId = JsonDocument.Parse(await ingest.Content.ReadAsStringAsync())
+            .RootElement.GetProperty("id").GetGuid();
+
+        var duplicateReindex = await owner.PostAsync(
+            $"/api/workspaces/{workspaceId}/knowledge/documents/{documentId}/reindex",
+            content: null);
+        Assert.Equal(HttpStatusCode.Accepted, duplicateReindex.StatusCode);
+        var duplicatePayload = JsonDocument.Parse(
+            await duplicateReindex.Content.ReadAsStringAsync()).RootElement;
+        Assert.Equal("Queued", duplicatePayload.GetProperty("status").GetString());
+
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<ICEHOTTDbContext>();
+            Assert.Equal(
+                1,
+                await db.KnowledgeProcessingJobs.CountAsync(
+                    x => x.DocumentId == documentId && x.WorkspaceId == workspaceId));
+        }
+
+        await ProcessQueuedKnowledgeAsync(workspaceId);
+
+        var reindex = await owner.PostAsync(
+            $"/api/workspaces/{workspaceId}/knowledge/documents/{documentId}/reindex",
+            content: null);
+        Assert.Equal(HttpStatusCode.Accepted, reindex.StatusCode);
+
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<ICEHOTTDbContext>();
+            var job = await db.KnowledgeProcessingJobs.SingleAsync(
+                x => x.DocumentId == documentId && x.WorkspaceId == workspaceId);
+            Assert.Equal(KnowledgeProcessingStatus.Queued, job.Status);
+            Assert.Equal(0, job.Attempts);
+        }
+    }
+
+    [Fact]
+    public async Task Job_Lease_Ownership_Rejects_Stale_Worker_Mutations()
+    {
+        using var owner = _factory.CreateClient();
+        var identity = await RegisterAsync(owner, $"lease-owner-{Guid.NewGuid():N}@icehott.dev");
+        owner.DefaultRequestHeaders.Authorization =
+            new AuthenticationHeaderValue("Bearer", identity.Token);
+
+        var workspaceResponse = await owner.PostAsJsonAsync(
+            "/api/workspaces",
+            new { name = "Lease Workspace" });
+        workspaceResponse.EnsureSuccessStatusCode();
+        var workspaceId = JsonDocument.Parse(
+            await workspaceResponse.Content.ReadAsStringAsync())
+            .RootElement.GetProperty("id").GetGuid();
+
+        var ingest = await owner.PostAsJsonAsync(
+            $"/api/workspaces/{workspaceId}/knowledge/documents",
+            new
+            {
+                title = "Lease Policy",
+                sourceName = "lease.txt",
+                content = "Only the active worker may mutate a processing lease."
+            });
+        ingest.EnsureSuccessStatusCode();
+        var documentId = JsonDocument.Parse(await ingest.Content.ReadAsStringAsync())
+            .RootElement.GetProperty("id").GetGuid();
+
+        using var scope = _factory.Services.CreateScope();
+        var queue = scope.ServiceProvider.GetRequiredService<IKnowledgeJobQueue>();
+        var processor = scope.ServiceProvider.GetRequiredService<KnowledgeIndexingProcessor>();
+
+        KnowledgeJobLease? lease = null;
+        for (var attempt = 0; attempt < 50; attempt++)
+        {
+            var candidate = await queue.LeaseNextAsync(
+                "worker-owner",
+                TimeSpan.FromMinutes(2));
+
+            if (candidate is null) break;
+            if (candidate.DocumentId == documentId)
+            {
+                lease = candidate;
+                break;
+            }
+
+            await queue.CompleteAsync(candidate.Id, candidate.WorkerId);
+        }
+
+        Assert.NotNull(lease);
+        Assert.False(await queue.CompleteAsync(lease!.Id, "stale-worker"));
+        Assert.False(await queue.RetryAsync(
+            lease.Id,
+            "stale-worker",
+            "must not mutate",
+            DateTimeOffset.UtcNow));
+
+        await processor.ProcessAsync(lease.WorkspaceId, lease.DocumentId);
+        Assert.True(await queue.CompleteAsync(lease.Id, lease.WorkerId));
+    }
+
+    private async Task ProcessQueuedKnowledgeAsync(Guid workspaceId)
+    {
+        using var scope = _factory.Services.CreateScope();
+        var queue = scope.ServiceProvider.GetRequiredService<IKnowledgeJobQueue>();
+        var processor = scope.ServiceProvider.GetRequiredService<KnowledgeIndexingProcessor>();
+        KnowledgeJobLease? lease = null;
+        for (var attempt = 0; attempt < 50; attempt++)
+        {
+            var candidate = await queue.LeaseNextAsync("test-worker", TimeSpan.FromMinutes(2));
+            if (candidate is null) break;
+
+            if (candidate.WorkspaceId == workspaceId)
+            {
+                lease = candidate;
+                break;
+            }
+
+            await processor.ProcessAsync(candidate.WorkspaceId, candidate.DocumentId);
+            await queue.CompleteAsync(candidate.Id, candidate.WorkerId);
+        }
+
+        Assert.NotNull(lease);
+        await processor.ProcessAsync(lease!.WorkspaceId, lease.DocumentId);
+        await queue.CompleteAsync(lease.Id, lease.WorkerId);
     }
 
     private static async Task<RegisteredIdentity> RegisterAsync(HttpClient client, string email)

@@ -1,4 +1,6 @@
+using ICEHOTT.API.Background;
 using ICEHOTT.Application.Abstractions;
+using ICEHOTT.Application.Knowledge;
 using ICEHOTT.Domain.Knowledge;
 using ICEHOTT.Persistence;
 using Microsoft.AspNetCore.Hosting;
@@ -8,6 +10,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Hosting;
 
 namespace ICEHOTT.Tests;
 
@@ -25,18 +28,38 @@ public sealed class IcehottApiFactory : WebApplicationFactory<Program>
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
         builder.UseEnvironment("Development");
+        builder.UseSetting("KnowledgeWorker:Enabled", "false");
         builder.ConfigureServices(services =>
         {
             services.RemoveAll<IDbContextOptionsConfiguration<ICEHOTTDbContext>>();
             services.RemoveAll<DbContextOptions<ICEHOTTDbContext>>();
             services.RemoveAll<ICEHOTTDbContext>();
             services.RemoveAll<IAiRuntimeClient>();
+            services.RemoveAll<IEmbeddingProvider>();
             services.RemoveAll<IVectorStore>();
+            services.RemoveAll<IHostedService>();
 
             services.AddDbContext<ICEHOTTDbContext>(options => options.UseSqlite(_connection));
             services.AddSingleton<IAiRuntimeClient, FakeAiRuntimeClient>();
+            services.AddSingleton<IEmbeddingProvider, FakeEmbeddingProvider>();
             services.AddScoped<IVectorStore, FakeVectorStore>();
         });
+    }
+
+    public async Task<bool> ProcessNextKnowledgeJobAsync()
+    {
+        using var scope = Services.CreateScope();
+        var queue = scope.ServiceProvider.GetRequiredService<IKnowledgeJobQueue>();
+        var processor = scope.ServiceProvider.GetRequiredService<KnowledgeIndexingProcessor>();
+
+        var lease = await queue.LeaseNextAsync(
+            "integration-test-worker",
+            TimeSpan.FromMinutes(2));
+        if (lease is null) return false;
+
+        await processor.ProcessAsync(lease.WorkspaceId, lease.DocumentId);
+        await queue.CompleteAsync(lease.Id, lease.WorkerId);
+        return true;
     }
 
     protected override void Dispose(bool disposing)
@@ -47,6 +70,9 @@ public sealed class IcehottApiFactory : WebApplicationFactory<Program>
 
     private sealed class FakeAiRuntimeClient : IAiRuntimeClient
     {
+        public Task<bool> IsReadyAsync(CancellationToken cancellationToken = default) =>
+            Task.FromResult(true);
+
         public Task<AiRuntimeReply> ReplyAsync(
             AiRuntimeRequest request,
             CancellationToken cancellationToken = default)
@@ -75,6 +101,17 @@ public sealed class IcehottApiFactory : WebApplicationFactory<Program>
                 .ToArray();
 
             return Task.FromResult(new AiEmbeddingReply(64, vectors));
+        }
+    }
+
+    private sealed class FakeEmbeddingProvider(IAiRuntimeClient runtime) : IEmbeddingProvider
+    {
+        public async Task<EmbeddingBatch> EmbedAsync(
+            IReadOnlyList<string> texts,
+            CancellationToken cancellationToken = default)
+        {
+            var reply = await runtime.EmbedAsync(texts, cancellationToken);
+            return new EmbeddingBatch(reply.Dimensions, reply.Embeddings, "test-runtime", "test-embedding");
         }
     }
 
@@ -112,7 +149,7 @@ public sealed class IcehottApiFactory : WebApplicationFactory<Program>
                     document.SourceName,
                     chunk.Content,
                     0.95))
-                .Take(Math.Clamp(limit, 1, 10))
+                .Take(Math.Clamp(limit, 1, 30))
                 .ToArray();
 
             return matches;

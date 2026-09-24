@@ -19,6 +19,7 @@ public sealed class ICEHOTTDbContext(DbContextOptions<ICEHOTTDbContext> options)
     public DbSet<ConversationMessageCitation> ConversationMessageCitations => Set<ConversationMessageCitation>();
     public DbSet<KnowledgeDocument> KnowledgeDocuments => Set<KnowledgeDocument>();
     public DbSet<KnowledgeChunk> KnowledgeChunks => Set<KnowledgeChunk>();
+    public DbSet<KnowledgeProcessingJob> KnowledgeProcessingJobs => Set<KnowledgeProcessingJob>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {

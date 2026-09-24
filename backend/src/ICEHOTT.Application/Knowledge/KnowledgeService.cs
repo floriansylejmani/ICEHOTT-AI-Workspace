@@ -6,8 +6,8 @@ namespace ICEHOTT.Application.Knowledge;
 public sealed class KnowledgeService(
     IWorkspaceRepository workspaces,
     IKnowledgeRepository knowledge,
-    IVectorStore vectorStore,
-    IAiRuntimeClient aiRuntime,
+    IKnowledgeJobQueue jobs,
+    IKnowledgeRetriever retriever,
     IDocumentTextExtractor textExtractor,
     IUnitOfWork unitOfWork,
     TimeProvider clock)
@@ -41,7 +41,7 @@ public sealed class KnowledgeService(
         if (await workspaces.FindMembershipAsync(userId, workspaceId, cancellationToken) is null)
             return new(null, "workspace_not_found");
 
-        return await IngestCoreAsync(
+        return await QueueDocumentAsync(
             userId,
             workspaceId,
             title,
@@ -91,13 +91,34 @@ public sealed class KnowledgeService(
             return new(null, "file_parse_failed");
         }
 
-        return await IngestCoreAsync(
+        return await QueueDocumentAsync(
             userId,
             workspaceId,
             resolvedTitle,
             safeSourceName,
             extracted,
             cancellationToken);
+    }
+
+    public async Task<KnowledgeResult<KnowledgeDocumentView>> ReindexAsync(
+        Guid userId,
+        Guid workspaceId,
+        Guid documentId,
+        CancellationToken cancellationToken = default)
+    {
+        if (await workspaces.FindMembershipAsync(userId, workspaceId, cancellationToken) is null)
+            return new(null, "workspace_not_found");
+
+        var document = await knowledge.FindDocumentAsync(workspaceId, documentId, cancellationToken);
+        if (document is null) return new(null, "document_not_found");
+
+        if (document.Status is KnowledgeDocumentStatus.Queued or KnowledgeDocumentStatus.Processing)
+            return new(MapDocument(document), null);
+
+        document.MarkQueued();
+        await jobs.EnqueueAsync(document.Id, workspaceId, cancellationToken);
+        await unitOfWork.SaveChangesAsync(cancellationToken);
+        return new(MapDocument(document), null);
     }
 
     public async Task<KnowledgeResult<KnowledgeDocumentView>> DeleteAsync(
@@ -132,18 +153,13 @@ public sealed class KnowledgeService(
         if (await workspaces.FindMembershipAsync(userId, workspaceId, cancellationToken) is null)
             return new(null, "workspace_not_found");
 
-        var embeddingReply = await aiRuntime.EmbedAsync([normalizedQuery], cancellationToken);
-        if (embeddingReply.Embeddings.Count != 1)
-            throw new AiRuntimeUnavailableException("AI runtime returned an invalid query embedding.");
-
-        var matches = await vectorStore.SearchAsync(
+        var retrieval = await retriever.RetrieveAsync(
             workspaceId,
             normalizedQuery,
-            embeddingReply.Embeddings[0],
             Math.Clamp(limit, 1, 10),
             cancellationToken);
 
-        return new(matches.Select(match => new KnowledgeSearchView(
+        return new(retrieval.Matches.Select(match => new KnowledgeSearchView(
             match.ChunkId,
             match.DocumentId,
             match.Title,
@@ -152,7 +168,7 @@ public sealed class KnowledgeService(
             match.Score)).ToArray(), null);
     }
 
-    private async Task<KnowledgeResult<KnowledgeDocumentView>> IngestCoreAsync(
+    private async Task<KnowledgeResult<KnowledgeDocumentView>> QueueDocumentAsync(
         Guid userId,
         Guid workspaceId,
         string title,
@@ -179,81 +195,11 @@ public sealed class KnowledgeService(
             normalizedContent,
             now);
 
-        var chunkTexts = ChunkText(normalizedContent);
-        var chunks = chunkTexts.Select((text, index) =>
-            new KnowledgeChunk(Guid.NewGuid(), document.Id, workspaceId, index, text, now)).ToArray();
-
-        await knowledge.AddAsync(document, chunks, cancellationToken);
+        await knowledge.AddDocumentAsync(document, cancellationToken);
+        await jobs.EnqueueAsync(document.Id, workspaceId, cancellationToken);
         await unitOfWork.SaveChangesAsync(cancellationToken);
 
-        try
-        {
-            var embeddedChunks = await EmbedInBatchesAsync(chunkTexts, cancellationToken);
-            if (embeddedChunks.Count != chunks.Length)
-                throw new AiRuntimeUnavailableException("Embedding count did not match chunk count.");
-
-            var embeddings = chunks.Select((chunk, index) =>
-                new VectorEmbedding(chunk.Id, embeddedChunks[index])).ToArray();
-
-            await vectorStore.StoreManyAsync(workspaceId, embeddings, cancellationToken);
-            document.MarkReady(chunks.Length, clock.GetUtcNow());
-            await unitOfWork.SaveChangesAsync(cancellationToken);
-        }
-        catch
-        {
-            document.MarkFailed();
-            await unitOfWork.SaveChangesAsync(cancellationToken);
-            throw;
-        }
-
         return new(MapDocument(document), null);
-    }
-
-    private async Task<IReadOnlyList<IReadOnlyList<float>>> EmbedInBatchesAsync(
-        IReadOnlyList<string> texts,
-        CancellationToken cancellationToken)
-    {
-        const int batchSize = 64;
-        var embeddings = new List<IReadOnlyList<float>>(texts.Count);
-        int? dimensions = null;
-
-        for (var start = 0; start < texts.Count; start += batchSize)
-        {
-            var batch = texts.Skip(start).Take(batchSize).ToArray();
-            var reply = await aiRuntime.EmbedAsync(batch, cancellationToken);
-
-            if (reply.Embeddings.Count != batch.Length)
-                throw new AiRuntimeUnavailableException("Embedding batch size did not match request size.");
-
-            dimensions ??= reply.Dimensions;
-            if (reply.Dimensions != dimensions)
-                throw new AiRuntimeUnavailableException("Embedding dimensions changed between batches.");
-
-            embeddings.AddRange(reply.Embeddings);
-        }
-
-        return embeddings;
-    }
-
-    private static string[] ChunkText(string content)
-    {
-        const int wordsPerChunk = 140;
-        const int overlapWords = 25;
-        var words = content.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
-        if (words.Length == 0) return [];
-
-        var chunks = new List<string>();
-        var start = 0;
-
-        while (start < words.Length)
-        {
-            var count = Math.Min(wordsPerChunk, words.Length - start);
-            chunks.Add(string.Join(' ', words, start, count));
-            if (start + count >= words.Length) break;
-            start += wordsPerChunk - overlapWords;
-        }
-
-        return chunks.ToArray();
     }
 
     private static string? NormalizeSourceName(string? sourceName)

@@ -56,10 +56,25 @@
 - The server enforces a 10 MB upload limit independently of browser checks.
 - Embeddings are generated in bounded batches so large accepted documents cannot exceed the AI runtime request limit.
 
+## Phase 3.5 implemented controls
+
+### Queue and worker integrity
+- Processing jobs are durable and workspace-bound in PostgreSQL.
+- PostgreSQL leasing uses `FOR UPDATE SKIP LOCKED` so concurrent workers cannot lease the same job.
+- Renew/complete/retry/fail operations require the active `LockedBy` worker ID.
+- Expired leases can be recovered; retries use bounded backoff and maximum attempts.
+- Reindexing is idempotent while a job is already Queued or Processing.
+
+### Retrieved-content safety
+- Retrieved chunks are treated as untrusted content.
+- Common instruction-override, prompt-exfiltration, and unsafe-tool/bypass patterns are removed before RAG context reaches the agent runtime.
+- Backend-derived citations remain independent of model-generated source labels.
+- This deterministic filter is defense in depth and does not replace trusted prompt boundaries or server-side tool authorization.
+
 ## Required controls for later phases
 
 - Malware scanning and deeper file-signature inspection for production uploads
-- Prompt-injection defenses for retrieved content
+- Stronger prompt-injection classifiers / model-aware defenses for adversarial corpora
 - Tool allowlists and per-tool permissions
 - Secret storage through deployment platforms
 - Structured audit logs for agent/tool execution

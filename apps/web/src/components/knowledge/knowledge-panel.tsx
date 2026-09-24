@@ -41,6 +41,7 @@ export function KnowledgePanel({
   const [ingesting, setIngesting] = useState(false);
   const [searching, setSearching] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [reindexingId, setReindexingId] = useState<string | null>(null);
   const [error, setError] = useState("");
 
   const loadDocuments = useCallback(async () => {
@@ -74,6 +75,31 @@ export function KnowledgePanel({
       cancelled = true;
     };
   }, [workspaceId, loadDocuments]);
+
+  const hasPendingDocuments = documents.some(
+    (document) => document.status === "Queued" || document.status === "Processing",
+  );
+
+  useEffect(() => {
+    if (!workspaceId || !hasPendingDocuments) return;
+
+    let cancelled = false;
+    const timer = window.setInterval(() => {
+      void (async () => {
+        try {
+          const items = await loadDocuments();
+          if (!cancelled) setDocuments(items);
+        } catch {
+          if (!cancelled) setError("Could not refresh knowledge processing status.");
+        }
+      })();
+    }, 1000);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [workspaceId, hasPendingDocuments, loadDocuments]);
 
   async function ingest(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -145,6 +171,34 @@ export function KnowledgePanel({
       setError("Knowledge search failed.");
     } finally {
       setSearching(false);
+    }
+  }
+
+  async function reindexDocument(documentId: string) {
+    if (!workspaceId || reindexingId) return;
+
+    setReindexingId(documentId);
+    setError("");
+    try {
+      const response = await apiFetch(
+        "/api/workspaces/" +
+          workspaceId +
+          "/knowledge/documents/" +
+          documentId +
+          "/reindex",
+        { method: "POST" },
+      );
+      if (!response.ok) throw new Error("knowledge_reindex_failed");
+
+      const queued = (await response.json()) as KnowledgeDocument;
+      setDocuments((current) =>
+        current.map((item) => (item.id === documentId ? queued : item)),
+      );
+      setResults((current) => current.filter((item) => item.documentId !== documentId));
+    } catch {
+      setError("Could not queue the document for reindexing.");
+    } finally {
+      setReindexingId(null);
     }
   }
 
@@ -324,9 +378,28 @@ export function KnowledgePanel({
                   <div className="flex items-center justify-between gap-3">
                     <p className="truncate text-xs text-white/70">{document.title}</p>
                     <div className="flex items-center gap-2">
-                      <span className="text-[10px] uppercase tracking-wider text-emerald-200/55">
+                      <span
+                        className={
+                          "text-[10px] uppercase tracking-wider " +
+                          (document.status === "Failed"
+                            ? "text-red-200/70"
+                            : document.status === "Queued" || document.status === "Processing"
+                              ? "text-amber-200/70"
+                              : "text-emerald-200/55")
+                        }
+                      >
                         {document.status}
                       </span>
+                      {(document.status === "Ready" || document.status === "Failed") && (
+                        <button
+                          type="button"
+                          disabled={reindexingId === document.id}
+                          onClick={() => void reindexDocument(document.id)}
+                          className="text-[10px] text-amber-200/45 hover:text-amber-100 disabled:opacity-30"
+                        >
+                          {reindexingId === document.id ? "Queuing…" : "Reindex"}
+                        </button>
+                      )}
                       <button
                         type="button"
                         disabled={deletingId === document.id}

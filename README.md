@@ -60,6 +60,19 @@ ICEHOTT is a production-oriented AI workspace for agentic work: knowledge, tools
 - Knowledge upload/search/delete UI in the dashboard
 - Tenant-isolated retrieval and upload integration tests
 
+### Phase 3.5 — Production RAG Hardening
+- Durable asynchronous ingestion jobs in PostgreSQL
+- Atomic multi-worker leasing with `FOR UPDATE SKIP LOCKED`
+- Lease heartbeat, expired-lease recovery, bounded retry/backoff, and max-attempt failure
+- Idempotent reindexing and stale-worker ownership protection
+- Structure-aware chunking with overlap
+- Provider-neutral embedding and retrieval interfaces
+- Expanded candidate retrieval plus deterministic hybrid reranking and document diversification
+- Retrieved-content prompt-injection / unsafe-tool policy
+- RAG ActivitySource + Meter instrumentation
+- Database and AI-runtime readiness checks
+- Queued/Processing polling and reindex UX in the dashboard
+
 ## Architecture
 
 ```text
@@ -133,4 +146,4 @@ The merge gate requires:
 - EF migration script validation
 - migration application to pgvector/PostgreSQL in GitHub Actions
 
-See [Phase 1](docs/PHASE-1-IDENTITY-WORKSPACES.md), [Phase 2](docs/PHASE-2-AGENT-RUNTIME.md), [Phase 3](docs/PHASE-3-KNOWLEDGE-RAG.md), [API contract](docs/API.md), [Architecture](docs/ARCHITECTURE.md), and [Security](docs/SECURITY.md).
+See [Phase 1](docs/PHASE-1-IDENTITY-WORKSPACES.md), [Phase 2](docs/PHASE-2-AGENT-RUNTIME.md), [Phase 3](docs/PHASE-3-KNOWLEDGE-RAG.md), [Phase 3.5](docs/PHASE-3.5-PRODUCTION-RAG-HARDENING.md), [API contract](docs/API.md), [Architecture](docs/ARCHITECTURE.md), and [Security](docs/SECURITY.md).

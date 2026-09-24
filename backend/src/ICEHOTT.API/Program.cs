@@ -1,6 +1,7 @@
 using System.Text;
 using System.Text.Json.Serialization;
 using System.Threading.RateLimiting;
+using ICEHOTT.API.Background;
 using ICEHOTT.Application.Abstractions;
 using ICEHOTT.Application.Agents;
 using ICEHOTT.Application.Auth;
@@ -35,6 +36,9 @@ if (!builder.Environment.IsDevelopment() && allowedOrigins.Length == 0)
     throw new InvalidOperationException("Cors:AllowedOrigins must be configured outside Development.");
 
 var autoMigrate = builder.Configuration.GetValue<bool>("Database:AutoMigrate");
+var knowledgeWorker = builder.Configuration
+    .GetSection(KnowledgeWorkerOptions.SectionName)
+    .Get<KnowledgeWorkerOptions>() ?? new KnowledgeWorkerOptions();
 
 builder.Services.AddControllers().AddJsonOptions(options =>
     options.JsonSerializerOptions.Converters.Add(new JsonStringEnumConverter()));
@@ -43,26 +47,42 @@ builder.Services.AddHealthChecks();
 builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.Configure<JwtOptions>(builder.Configuration.GetSection(JwtOptions.SectionName));
 builder.Services.Configure<AiRuntimeOptions>(builder.Configuration.GetSection(AiRuntimeOptions.SectionName));
+builder.Services.Configure<KnowledgeWorkerOptions>(
+    builder.Configuration.GetSection(KnowledgeWorkerOptions.SectionName));
+
 builder.Services.AddDbContext<ICEHOTTDbContext>(options => options.UseNpgsql(connectionString));
 builder.Services.AddScoped<IUserRepository, UserRepository>();
 builder.Services.AddScoped<IRefreshSessionRepository, RefreshSessionRepository>();
 builder.Services.AddScoped<IWorkspaceRepository, WorkspaceRepository>();
 builder.Services.AddScoped<IConversationRepository, ConversationRepository>();
 builder.Services.AddScoped<IKnowledgeRepository, KnowledgeRepository>();
+builder.Services.AddScoped<IKnowledgeJobQueue, KnowledgeJobQueue>();
 builder.Services.AddScoped<IVectorStore, PostgresVectorStore>();
 builder.Services.AddScoped<IUnitOfWork>(sp => sp.GetRequiredService<ICEHOTTDbContext>());
+
 builder.Services.AddSingleton<IPasswordService, PasswordService>();
 builder.Services.AddSingleton<ITokenService, TokenService>();
 builder.Services.AddSingleton<IDocumentTextExtractor, DocumentTextExtractor>();
+builder.Services.AddSingleton<IKnowledgeChunker, StructureAwareKnowledgeChunker>();
+builder.Services.AddSingleton<IRagReranker, HybridRagReranker>();
+builder.Services.AddSingleton<IRetrievedContentPolicy, RetrievedContentPolicy>();
+
 builder.Services.AddHttpClient<IAiRuntimeClient, AiRuntimeClient>(client =>
 {
     client.BaseAddress = new Uri(aiRuntimeUri.ToString().TrimEnd('/') + "/");
     client.Timeout = TimeSpan.FromSeconds(Math.Clamp(aiRuntime.TimeoutSeconds, 5, 120));
 });
+builder.Services.AddScoped<IEmbeddingProvider, AiRuntimeEmbeddingProvider>();
+builder.Services.AddScoped<IKnowledgeRetriever, KnowledgeRetriever>();
+
 builder.Services.AddScoped<AuthService>();
 builder.Services.AddScoped<WorkspaceService>();
 builder.Services.AddScoped<AgentService>();
 builder.Services.AddScoped<KnowledgeService>();
+builder.Services.AddScoped<KnowledgeIndexingProcessor>();
+
+if (knowledgeWorker.Enabled)
+    builder.Services.AddHostedService<KnowledgeIngestionWorker>();
 
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer(options => options.TokenValidationParameters = new TokenValidationParameters
@@ -117,7 +137,32 @@ app.UseAuthentication();
 app.UseAuthorization();
 app.MapControllers();
 app.MapHealthChecks("/health");
-app.MapGet("/ready", () => Results.Ok(new { status = "ready", service = "icehott-api" }));
+app.MapGet("/ready", async (
+    ICEHOTTDbContext db,
+    IAiRuntimeClient aiRuntimeClient,
+    CancellationToken cancellationToken) =>
+{
+    var databaseReady = await db.Database.CanConnectAsync(cancellationToken);
+    var aiReady = await aiRuntimeClient.IsReadyAsync(cancellationToken);
+
+    return databaseReady && aiReady
+        ? Results.Ok(new
+        {
+            status = "ready",
+            service = "icehott-api",
+            database = "ready",
+            aiRuntime = "ready"
+        })
+        : Results.Json(
+            new
+            {
+                status = "not_ready",
+                service = "icehott-api",
+                database = databaseReady ? "ready" : "unavailable",
+                aiRuntime = aiReady ? "ready" : "unavailable"
+            },
+            statusCode: StatusCodes.Status503ServiceUnavailable);
+});
 
 app.Run();
 

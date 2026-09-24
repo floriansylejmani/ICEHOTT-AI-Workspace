@@ -19,7 +19,7 @@ public sealed class KnowledgeDocument
         Title = title.Trim();
         SourceName = string.IsNullOrWhiteSpace(sourceName) ? null : sourceName.Trim();
         Content = content.Trim();
-        Status = KnowledgeDocumentStatus.Processing;
+        Status = KnowledgeDocumentStatus.Queued;
         CreatedAtUtc = createdAtUtc;
     }
 
@@ -34,6 +34,18 @@ public sealed class KnowledgeDocument
     public DateTimeOffset CreatedAtUtc { get; private set; }
     public DateTimeOffset? IndexedAtUtc { get; private set; }
 
+    public void MarkQueued()
+    {
+        Status = KnowledgeDocumentStatus.Queued;
+        IndexedAtUtc = null;
+    }
+
+    public void MarkProcessing()
+    {
+        Status = KnowledgeDocumentStatus.Processing;
+        IndexedAtUtc = null;
+    }
+
     public void MarkReady(int chunkCount, DateTimeOffset indexedAtUtc)
     {
         Status = KnowledgeDocumentStatus.Ready;
@@ -44,6 +56,7 @@ public sealed class KnowledgeDocument
     public void MarkFailed()
     {
         Status = KnowledgeDocumentStatus.Failed;
+        ChunkCount = 0;
         IndexedAtUtc = null;
     }
 }

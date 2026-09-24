@@ -84,6 +84,20 @@ public sealed class AiRuntimeClient(HttpClient httpClient) : IAiRuntimeClient
         }
     }
 
+    public async Task<bool> IsReadyAsync(CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            using var response = await httpClient.GetAsync("ready", cancellationToken);
+            return response.IsSuccessStatusCode;
+        }
+        catch (Exception exception) when (
+            exception is HttpRequestException or TaskCanceledException or NotSupportedException)
+        {
+            return false;
+        }
+    }
+
     private sealed record RuntimeRequest(
         Guid WorkspaceId,
         Guid UserId,

@@ -114,6 +114,38 @@ dashboard
 
 Vector persistence is isolated behind `IVectorStore`; provider/model calls remain behind `IAiRuntimeClient`. The Domain project has no pgvector or provider SDK dependency.
 
+## Phase 3.5 production RAG flow
+
+```text
+Knowledge API -> persist Queued document + durable job
+                         |
+                         v
+               KnowledgeIngestionWorker
+                         |
+                  atomic lease
+                (SKIP LOCKED)
+                         |
+                         v
+             StructureAwareChunker
+                         |
+                         v
+               IEmbeddingProvider
+                         |
+                         v
+                pgvector storage
+                         |
+                         v
+             Ready / retry / failed
+
+Query -> IKnowledgeRetriever -> candidate expansion
+                           -> content safety filter
+                           -> deterministic reranker
+                           -> diversified top-K
+                           -> agent runtime
+```
+
+Processing jobs are workspace-bound and use lease ownership, heartbeats, bounded retries, and expired-lease recovery. `IEmbeddingProvider`, `IKnowledgeRetriever`, `IRagReranker`, and `IRetrievedContentPolicy` keep orchestration independent from any specific model vendor. `ICEHOTT.Rag` ActivitySource/Meter instrumentation records indexing, retrieval, filtering, and job outcomes.
+
 ## Tenant model
 
 ```text
