@@ -2,7 +2,10 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches:
+      - main
+      - "feature/**"
+      - "fix/**"
   pull_request:
 
 permissions:
@@ -11,19 +14,49 @@ permissions:
 jobs:
   backend:
     runs-on: ubuntu-latest
+    env:
+      ASPNETCORE_ENVIRONMENT: Development
+      ConnectionStrings__DefaultConnection: Host=localhost;Port=5432;Database=icehott_ci;Username=postgres;Password=postgres
+      Jwt__Key: ICEHOTT-ci-only-key-with-at-least-32-characters-2026
+      Cors__AllowedOrigins__0: http://localhost:3000
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_DB: icehott_ci
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d icehott_ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-dotnet@v5
         with:
           dotnet-version: 9.0.x
-      - run: dotnet restore backend/ICEHOTT.sln
-      - run: dotnet tool restore
-      - run: dotnet build backend/ICEHOTT.sln -c Release --no-restore
-      - name: Validate PostgreSQL migration script
-        env:
-          ASPNETCORE_ENVIRONMENT: Development
+
+      - name: Restore
+        run: dotnet restore backend/ICEHOTT.sln
+
+      - name: Restore local tools
+        run: dotnet tool restore
+
+      - name: Build
+        run: dotnet build backend/ICEHOTT.sln -c Release --no-restore
+
+      - name: Validate idempotent migration script
         run: dotnet ef migrations script --project backend/src/ICEHOTT.Persistence/ICEHOTT.Persistence.csproj --startup-project backend/src/ICEHOTT.API/ICEHOTT.API.csproj --idempotent --output migration.sql
-      - run: dotnet test backend/ICEHOTT.sln -c Release --no-build
+
+      - name: Apply migrations to PostgreSQL
+        run: dotnet ef database update --project backend/src/ICEHOTT.Persistence/ICEHOTT.Persistence.csproj --startup-project backend/src/ICEHOTT.API/ICEHOTT.API.csproj
+
+      - name: Test
+        run: dotnet test backend/ICEHOTT.sln -c Release --no-build
 
   frontend:
     runs-on: ubuntu-latest
@@ -37,9 +70,18 @@ jobs:
           node-version: 24
           cache: npm
           cache-dependency-path: apps/web/package-lock.json
-      - run: npm ci
-      - run: npm run lint
-      - run: npm run build
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Test
+        run: npm test
+
+      - name: Build
+        run: npm run build
 
   ai:
     runs-on: ubuntu-latest
@@ -51,5 +93,9 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: '3.12'
-      - run: pip install -r requirements.txt
-      - run: pytest -q
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Test
+        run: pytest -q

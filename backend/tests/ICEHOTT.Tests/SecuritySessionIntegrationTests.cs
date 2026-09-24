@@ -19,7 +19,12 @@ public sealed class SecuritySessionIntegrationTests : IClassFixture<IcehottApiFa
     {
         using var client = _factory.CreateClient();
         var email = $"hash-{Guid.NewGuid():N}@icehott.dev";
-        var response = await client.PostAsJsonAsync("/api/auth/register", new { email, displayName = "Hash User", password = Password });
+        var response = await client.PostAsJsonAsync("/api/auth/register", new
+        {
+            email,
+            displayName = "Hash User",
+            password = Password
+        });
         response.EnsureSuccessStatusCode();
 
         using var scope = _factory.Services.CreateScope();
@@ -30,9 +35,26 @@ public sealed class SecuritySessionIntegrationTests : IClassFixture<IcehottApiFa
     }
 
     [Fact]
+    public async Task Refresh_Requires_Csrf_Header()
+    {
+        using var client = _factory.CreateClient();
+        var register = await client.PostAsJsonAsync("/api/auth/register", new
+        {
+            email = $"csrf-{Guid.NewGuid():N}@icehott.dev",
+            displayName = "CSRF User",
+            password = Password
+        });
+        register.EnsureSuccessStatusCode();
+
+        Assert.Equal(HttpStatusCode.BadRequest, (await client.PostAsync("/api/auth/refresh", null)).StatusCode);
+    }
+
+    [Fact]
     public async Task Refresh_Rotates_Token_And_Rejects_Replay()
     {
         using var client = _factory.CreateClient();
+        client.DefaultRequestHeaders.Add("X-ICEHOTT-CSRF", "1");
+
         var register = await client.PostAsJsonAsync("/api/auth/register", new
         {
             email = $"rotate-{Guid.NewGuid():N}@icehott.dev",
@@ -45,10 +67,33 @@ public sealed class SecuritySessionIntegrationTests : IClassFixture<IcehottApiFa
         var payload = JsonDocument.Parse(await register.Content.ReadAsStringAsync());
         Assert.False(payload.RootElement.TryGetProperty("refreshToken", out _));
 
-        var refresh = await client.PostAsync("/api/auth/refresh", null);
-        Assert.Equal(HttpStatusCode.OK, refresh.StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await client.PostAsync("/api/auth/refresh", null)).StatusCode);
 
         using var replay = _factory.CreateClient();
+        replay.DefaultRequestHeaders.Add("X-ICEHOTT-CSRF", "1");
+        replay.DefaultRequestHeaders.TryAddWithoutValidation("Cookie", $"icehott_refresh={oldRefresh}");
+        Assert.Equal(HttpStatusCode.Unauthorized, (await replay.PostAsync("/api/auth/refresh", null)).StatusCode);
+    }
+
+    [Fact]
+    public async Task Logout_Revokes_Refresh_Session()
+    {
+        using var client = _factory.CreateClient();
+        client.DefaultRequestHeaders.Add("X-ICEHOTT-CSRF", "1");
+
+        var register = await client.PostAsJsonAsync("/api/auth/register", new
+        {
+            email = $"logout-{Guid.NewGuid():N}@icehott.dev",
+            displayName = "Logout User",
+            password = Password
+        });
+        register.EnsureSuccessStatusCode();
+        var oldRefresh = ExtractRefreshToken(register);
+
+        Assert.Equal(HttpStatusCode.NoContent, (await client.PostAsync("/api/auth/logout", null)).StatusCode);
+
+        using var replay = _factory.CreateClient();
+        replay.DefaultRequestHeaders.Add("X-ICEHOTT-CSRF", "1");
         replay.DefaultRequestHeaders.TryAddWithoutValidation("Cookie", $"icehott_refresh={oldRefresh}");
         Assert.Equal(HttpStatusCode.Unauthorized, (await replay.PostAsync("/api/auth/refresh", null)).StatusCode);
     }

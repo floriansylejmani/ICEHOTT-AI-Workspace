@@ -54,6 +54,16 @@ public sealed class AuthService(
         return new(session, null);
     }
 
+    public async Task LogoutAsync(string refreshToken, CancellationToken cancellationToken = default)
+    {
+        var now = clock.GetUtcNow();
+        var session = await sessions.FindActiveByHashAsync(tokens.HashRefreshToken(refreshToken), now, cancellationToken);
+        if (session is null) return;
+
+        session.Revoke(now);
+        await unitOfWork.SaveChangesAsync(cancellationToken);
+    }
+
     private async Task<AuthSession> IssueSessionAsync(User user, DateTimeOffset now, CancellationToken cancellationToken, Guid? sessionId = null)
     {
         var access = tokens.CreateAccessToken(user);

@@ -1,14 +1,20 @@
 using System.Security.Claims;
 using ICEHOTT.API.Models;
+using ICEHOTT.Application.Abstractions;
 using ICEHOTT.Application.Auth;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 
 namespace ICEHOTT.API.Controllers;
 
 [ApiController]
 [Route("api/auth")]
-public sealed class AuthController(AuthService auth, IHostEnvironment environment) : ControllerBase
+[EnableRateLimiting("auth")]
+public sealed class AuthController(
+    AuthService auth,
+    IHostEnvironment environment,
+    ITokenService tokens) : ControllerBase
 {
     [HttpPost("register")]
     public async Task<IActionResult> Register(RegisterRequest request, CancellationToken cancellationToken)
@@ -29,12 +35,26 @@ public sealed class AuthController(AuthService auth, IHostEnvironment environmen
     [HttpPost("refresh")]
     public async Task<IActionResult> Refresh(CancellationToken cancellationToken)
     {
+        if (!HasCsrfHeader()) return BadRequest(new { code = "csrf_required" });
+
         if (!Request.Cookies.TryGetValue("icehott_refresh", out var refreshToken) || string.IsNullOrWhiteSpace(refreshToken))
             return Unauthorized(new { code = "missing_refresh_token" });
 
         var result = await auth.RefreshAsync(refreshToken, cancellationToken);
         if (!result.Succeeded) return Unauthorized(new { code = result.ErrorCode });
         return CompleteAuthentication(result.Session!);
+    }
+
+    [HttpPost("logout")]
+    public async Task<IActionResult> Logout(CancellationToken cancellationToken)
+    {
+        if (!HasCsrfHeader()) return BadRequest(new { code = "csrf_required" });
+
+        if (Request.Cookies.TryGetValue("icehott_refresh", out var refreshToken) && !string.IsNullOrWhiteSpace(refreshToken))
+            await auth.LogoutAsync(refreshToken, cancellationToken);
+
+        Response.Cookies.Delete("icehott_refresh", new CookieOptions { Path = "/api/auth" });
+        return NoContent();
     }
 
     [Authorize]
@@ -55,9 +75,12 @@ public sealed class AuthController(AuthService auth, IHostEnvironment environmen
             Secure = !environment.IsDevelopment(),
             SameSite = environment.IsDevelopment() ? SameSiteMode.Lax : SameSiteMode.None,
             Path = "/api/auth",
-            MaxAge = TimeSpan.FromDays(30)
+            MaxAge = tokens.RefreshLifetime
         });
 
         return Ok(new AuthResponse(session.User, session.AccessToken, session.AccessTokenExpiresAtUtc));
     }
+
+    private bool HasCsrfHeader() =>
+        string.Equals(Request.Headers["X-ICEHOTT-CSRF"], "1", StringComparison.Ordinal);
 }

@@ -29,5 +29,14 @@ public sealed class WorkspacesController(WorkspaceService workspaces) : Controll
         return result.Succeeded ? Ok(result.Workspace) : NotFound(new { code = result.ErrorCode });
     }
 
+    [HttpGet("{workspaceId:guid}/settings")]
+    public async Task<IActionResult> GetSettings(Guid workspaceId, CancellationToken cancellationToken)
+    {
+        var result = await workspaces.GetSettingsAsync(CurrentUserId(), workspaceId, cancellationToken);
+        if (result.Succeeded) return Ok(result.Workspace);
+        if (result.ErrorCode == "forbidden") return Forbid();
+        return NotFound(new { code = result.ErrorCode });
+    }
+
     private Guid CurrentUserId() => Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
 }

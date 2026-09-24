@@ -35,6 +35,14 @@ public sealed class WorkspaceService(
             : new(Map(membership, membership.Workspace), null);
     }
 
+    public async Task<WorkspaceResult> GetSettingsAsync(Guid userId, Guid workspaceId, CancellationToken cancellationToken = default)
+    {
+        var membership = await workspaces.FindMembershipAsync(userId, workspaceId, cancellationToken);
+        if (membership is null) return new(null, "workspace_not_found");
+        if (membership.Role == WorkspaceRole.Member) return new(null, "forbidden");
+        return new(Map(membership, membership.Workspace), null);
+    }
+
     private static WorkspaceView Map(WorkspaceMembership membership, Workspace workspace) =>
         new(workspace.Id, workspace.Name, workspace.Slug, membership.Role, workspace.CreatedAtUtc);
 
