@@ -146,4 +146,4 @@ The merge gate requires:
 - EF migration script validation
 - migration application to pgvector/PostgreSQL in GitHub Actions
 
-See [Phase 1](docs/PHASE-1-IDENTITY-WORKSPACES.md), [Phase 2](docs/PHASE-2-AGENT-RUNTIME.md), [Phase 3](docs/PHASE-3-KNOWLEDGE-RAG.md), [Phase 3.5](docs/PHASE-3.5-PRODUCTION-RAG-HARDENING.md), [API contract](docs/API.md), [Architecture](docs/ARCHITECTURE.md), and [Security](docs/SECURITY.md).
+See [Phase 1](docs/PHASE-1-IDENTITY-WORKSPACES.md), [Phase 2](docs/PHASE-2-AGENT-RUNTIME.md), [Phase 3](docs/PHASE-3-KNOWLEDGE-RAG.md), [Phase 3.5](docs/PHASE-3.5-PRODUCTION-RAG-HARDENING.md), [Phase 3.6 architecture freeze](docs/PHASE-3.6-ARCHITECTURE-FREEZE.md), [Multi-agent engineering roadmap](docs/MULTI-AGENT-ENGINEERING-ROADMAP.md), [API contract](docs/API.md), [Architecture](docs/ARCHITECTURE.md), and [Security](docs/SECURITY.md).
