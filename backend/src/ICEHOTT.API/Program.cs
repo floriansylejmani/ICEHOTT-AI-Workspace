@@ -57,6 +57,8 @@ builder.Services.AddScoped<IWorkspaceRepository, WorkspaceRepository>();
 builder.Services.AddScoped<IConversationRepository, ConversationRepository>();
 builder.Services.AddScoped<IKnowledgeRepository, KnowledgeRepository>();
 builder.Services.AddScoped<IKnowledgeJobQueue, KnowledgeJobQueue>();
+builder.Services.AddScoped<IVectorIndexProvisioner, PostgresVectorIndexProvisioner>();
+builder.Services.AddScoped<IEmbeddingProfileCoverageService, PostgresEmbeddingProfileCoverageService>();
 builder.Services.AddScoped<IVectorStore, PostgresVectorStore>();
 builder.Services.AddScoped<IEmbeddingProfileRepository, EmbeddingProfileRepository>();
 builder.Services.AddScoped<IServingEmbeddingProfileResolver, ServingEmbeddingProfileResolver>();
