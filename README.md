@@ -118,6 +118,15 @@ ICEHOTT is a production-oriented AI workspace for agentic work: knowledge, tools
 - Phase 4 EF migration validated from zero on PostgreSQL/pgvector
 - Tenant crossing, self-approval, under-privileged approval, invalid-schema, and idempotency tests
 
+### Phase 4.5 — Security, Approvals & Audit Hardening
+- Versioned per-workspace tool policy overlays and approval-time policy revalidation
+- Transactional per-workspace/per-tool quotas with idempotent retry semantics
+- Bounded request bodies, credential-pattern rejection, and secret-safe result/error handling
+- Execution deadlines, cancellation, leases, and `OutcomeUnknown` recovery without automatic write replay
+- Approval commit protected against concurrent requester/approver membership removal or demotion
+- PostgreSQL-enforced append-only execution and policy audit rows
+- Prompt-injection abuse tests proving untrusted text cannot grant approval or tool authority
+
 ## Architecture
 
 ```text
