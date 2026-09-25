@@ -83,7 +83,8 @@ public sealed record ToolExecutionView(
 public sealed record ToolOperationResult<T>(
     T? Value,
     string? ErrorCode,
-    IReadOnlyList<string>? ValidationErrors = null)
+    IReadOnlyList<string>? ValidationErrors = null,
+    int? RetryAfterSeconds = null)
 {
     public bool Succeeded => ErrorCode is null;
 }

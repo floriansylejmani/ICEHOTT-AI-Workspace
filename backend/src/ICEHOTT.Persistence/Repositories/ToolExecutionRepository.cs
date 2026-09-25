@@ -116,6 +116,11 @@ public sealed class ToolExecutionRepository(ICEHOTTDbContext db)
         CancellationToken cancellationToken = default) =>
         ToolPersistence.SaveAsync(db, cancellationToken);
 
+    public Task<ToolPersistenceOutcome> SaveAdmissionAsync(
+        ToolQuotaCharge charge,
+        CancellationToken cancellationToken = default) =>
+        ToolPersistence.SaveAsync(db, cancellationToken);
+
     public void DiscardPendingSideEffects(ToolExecution execution)
     {
         foreach (var entry in db.ChangeTracker.Entries().ToList())

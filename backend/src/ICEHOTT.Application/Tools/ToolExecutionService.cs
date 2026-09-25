@@ -13,6 +13,8 @@ public sealed class ToolExecutionService(
     IToolPolicyRepository policies,
     IToolRegistry registry,
     TimeProvider clock,
+ToolQuotaOptions quotas,
+    IToolOperationalLog operationalLog,
     TimeSpan? handlerTimeout = null)
 {
     /// <summary>

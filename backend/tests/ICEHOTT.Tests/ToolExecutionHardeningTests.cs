@@ -177,7 +177,9 @@ public sealed class ToolExecutionHardeningTests(ToolSecurityFixture fx)
                 repository,
                 scope.ServiceProvider.GetRequiredService<IToolPolicyRepository>(),
                 new ToolRegistry([new CountingTool(calls)]),
-                TimeProvider.System);
+                TimeProvider.System,
+                scope.ServiceProvider.GetRequiredService<ToolQuotaOptions>(),
+                scope.ServiceProvider.GetRequiredService<IToolOperationalLog>());
 
             var second = await service.RequestAsync(
                 fx.Owner.UserId, workspaceId, CountingTool.Name, Args(new { text = "one" }), key);
@@ -196,7 +198,9 @@ public sealed class ToolExecutionHardeningTests(ToolSecurityFixture fx)
                 repository,
                 scope.ServiceProvider.GetRequiredService<IToolPolicyRepository>(),
                 new ToolRegistry([new CountingTool(calls)]),
-                TimeProvider.System);
+                TimeProvider.System,
+                scope.ServiceProvider.GetRequiredService<ToolQuotaOptions>(),
+                scope.ServiceProvider.GetRequiredService<IToolOperationalLog>());
 
             var conflicting = await service.RequestAsync(
                 fx.Owner.UserId, workspaceId, CountingTool.Name, Args(new { text = "two" }), key);
@@ -290,7 +294,9 @@ public sealed class ToolExecutionHardeningTests(ToolSecurityFixture fx)
             scope.ServiceProvider.GetRequiredService<IToolExecutionRepository>(),
             scope.ServiceProvider.GetRequiredService<IToolPolicyRepository>(),
             new ToolRegistry([tool]),
-            TimeProvider.System);
+            TimeProvider.System,
+            scope.ServiceProvider.GetRequiredService<ToolQuotaOptions>(),
+            scope.ServiceProvider.GetRequiredService<IToolOperationalLog>());
 
     private static JsonElement Args(object value) =>
         JsonSerializer.SerializeToElement(value);
@@ -447,6 +453,9 @@ public sealed class ToolExecutionHardeningTests(ToolSecurityFixture fx)
 
         public Task<ToolPersistenceOutcome> SaveChangesAsync(CancellationToken cancellationToken = default) =>
             inner.SaveChangesAsync(cancellationToken);
+
+        public Task<ToolPersistenceOutcome> SaveAdmissionAsync(ToolQuotaCharge charge, CancellationToken cancellationToken = default) =>
+            inner.SaveAdmissionAsync(charge, cancellationToken);
 
         public void DiscardPendingSideEffects(ToolExecution execution) =>
             inner.DiscardPendingSideEffects(execution);

@@ -152,7 +152,9 @@ public sealed class ToolPolicyConcurrencyTests(ToolSecurityFixture fx)
             scopeB.ServiceProvider.GetRequiredService<IToolExecutionRepository>(),
             new HideFirstPolicyLookup(scopeB.ServiceProvider.GetRequiredService<IToolPolicyRepository>()),
             scopeB.ServiceProvider.GetRequiredService<IToolRegistry>(),
-            TimeProvider.System);
+            TimeProvider.System,
+            scopeB.ServiceProvider.GetRequiredService<ToolQuotaOptions>(),
+            scopeB.ServiceProvider.GetRequiredService<IToolOperationalLog>());
 
         // ...while the Owner creates the first policy, disabling the tool.
         Assert.Equal(1, await UpdatePolicyAsync(workspaceId, Note, PolicyBody(0, false, true)));

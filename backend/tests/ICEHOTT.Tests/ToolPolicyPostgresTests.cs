@@ -192,7 +192,9 @@ public sealed class ToolPolicyPostgresTests
             new ToolExecutionRepository(db),
             new ToolPolicyRepository(db),
             Registry(db),
-            TimeProvider.System);
+            TimeProvider.System,
+            new ToolQuotaOptions(),
+            new ToolOperationalLog(Microsoft.Extensions.Logging.Abstractions.NullLogger<ToolOperationalLog>.Instance));
 
     private static ToolPolicyService PolicyService(ICEHOTTDbContext db) =>
         new(

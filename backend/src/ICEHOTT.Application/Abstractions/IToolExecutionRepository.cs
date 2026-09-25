@@ -29,8 +29,16 @@ public enum ToolPersistenceOutcome
     /// for this decision. Nothing was committed and pending changes were
     /// discarded; the caller must re-evaluate under the current policy.
     /// </summary>
-    PolicyConflict = 4
+    PolicyConflict = 4,
+
+    QuotaExceeded = 5
 }
+
+public sealed record ToolQuotaCharge(
+    Guid WorkspaceId,
+    string ToolName,
+    long WindowStartUnixSeconds,
+    int PermitLimit);
 
 public interface IToolExecutionRepository
 {
@@ -75,6 +83,10 @@ public interface IToolExecutionRepository
     /// as outcomes instead of exceptions, and in those cases nothing is committed.
     /// </summary>
     Task<ToolPersistenceOutcome> SaveChangesAsync(
+        CancellationToken cancellationToken = default);
+
+    Task<ToolPersistenceOutcome> SaveAdmissionAsync(
+        ToolQuotaCharge charge,
         CancellationToken cancellationToken = default);
 
     /// <summary>
