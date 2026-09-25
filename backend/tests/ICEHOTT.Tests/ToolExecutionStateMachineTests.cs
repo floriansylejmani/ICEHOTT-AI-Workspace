@@ -3,15 +3,14 @@ using ICEHOTT.Domain.Tools;
 namespace ICEHOTT.Tests;
 
 /// <summary>
-/// Exhaustive transition checks for the frozen Phase 4 state machine:
-/// PendingApproval -> Ready | Rejected; Ready -> Running; Running -> Succeeded | Failed.
+/// Exhaustive transition checks for the Phase 4.5 tool execution state machine.
 /// </summary>
 public sealed class ToolExecutionStateMachineTests
 {
     private static readonly Guid Requester = Guid.NewGuid();
     private static readonly DateTimeOffset Now = DateTimeOffset.UtcNow;
 
-    public enum Transition { Approve, Reject, Start, Succeed, Fail }
+    public enum Transition { Approve, Reject, Start, Succeed, Fail, Cancel, TimeOut, MarkOutcomeUnknown }
 
     public static TheoryData<ToolExecutionStatus, Transition> IllegalTransitions()
     {
@@ -19,9 +18,13 @@ public sealed class ToolExecutionStateMachineTests
         {
             (ToolExecutionStatus.PendingApproval, Transition.Approve),
             (ToolExecutionStatus.PendingApproval, Transition.Reject),
+            (ToolExecutionStatus.PendingApproval, Transition.Cancel),
+            (ToolExecutionStatus.Ready, Transition.Cancel),
             (ToolExecutionStatus.Ready, Transition.Start),
             (ToolExecutionStatus.Running, Transition.Succeed),
             (ToolExecutionStatus.Running, Transition.Fail),
+            (ToolExecutionStatus.Running, Transition.TimeOut),
+            (ToolExecutionStatus.Running, Transition.MarkOutcomeUnknown),
         };
 
         var data = new TheoryData<ToolExecutionStatus, Transition>();
@@ -52,6 +55,9 @@ public sealed class ToolExecutionStateMachineTests
     [InlineData(ToolExecutionStatus.Succeeded)]
     [InlineData(ToolExecutionStatus.Failed)]
     [InlineData(ToolExecutionStatus.Rejected)]
+    [InlineData(ToolExecutionStatus.Cancelled)]
+    [InlineData(ToolExecutionStatus.TimedOut)]
+    [InlineData(ToolExecutionStatus.OutcomeUnknown)]
     public void Terminal_States_Accept_No_Transition(ToolExecutionStatus terminal)
     {
         var execution = InState(terminal);
@@ -143,6 +149,26 @@ public sealed class ToolExecutionStateMachineTests
                     e.Reject(approver, Now);
                     return e;
                 }
+            case ToolExecutionStatus.Cancelled:
+                {
+                    var e = New(true);
+                    e.Cancel(Now);
+                    return e;
+                }
+            case ToolExecutionStatus.TimedOut:
+                {
+                    var e = New(false);
+                    e.Start(Now);
+                    e.TimeOut(Now);
+                    return e;
+                }
+            case ToolExecutionStatus.OutcomeUnknown:
+                {
+                    var e = New(false);
+                    e.Start(Now);
+                    e.MarkOutcomeUnknown(Now);
+                    return e;
+                }
             default:
                 throw new ArgumentOutOfRangeException(nameof(status), status, null);
         }
@@ -157,6 +183,9 @@ public sealed class ToolExecutionStateMachineTests
             case Transition.Start: execution.Start(Now); break;
             case Transition.Succeed: execution.Succeed("""{"x":1}""", Now); break;
             case Transition.Fail: execution.Fail("code", "message", Now); break;
+            case Transition.Cancel: execution.Cancel(Now); break;
+            case Transition.TimeOut: execution.TimeOut(Now); break;
+            case Transition.MarkOutcomeUnknown: execution.MarkOutcomeUnknown(Now); break;
         }
     }
 

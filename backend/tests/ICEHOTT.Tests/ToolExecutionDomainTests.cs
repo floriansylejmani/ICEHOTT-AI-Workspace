@@ -79,6 +79,63 @@ public sealed class ToolExecutionDomainTests
                 DateTimeOffset.UtcNow));
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Cancellation_Before_Start_Is_Terminal(bool requiresApproval)
+    {
+        var execution = NewExecution(Guid.NewGuid(), requiresApproval);
+        var now = DateTimeOffset.UtcNow;
+
+        execution.Cancel(now);
+
+        Assert.Equal(ToolExecutionStatus.Cancelled, execution.Status);
+        Assert.Equal(now, execution.CompletedAtUtc);
+        Assert.Null(execution.StartedAtUtc);
+        Assert.Throws<InvalidOperationException>(() => execution.Start(now));
+        Assert.Throws<InvalidOperationException>(() => execution.Cancel(now));
+    }
+
+    [Fact]
+    public void Running_Timeout_Has_Safe_Code_And_Cannot_Succeed()
+    {
+        var execution = NewExecution(Guid.NewGuid(), false);
+        var now = DateTimeOffset.UtcNow;
+        execution.Start(now);
+        execution.TimeOut(now.AddSeconds(1));
+
+        Assert.Equal(ToolExecutionStatus.TimedOut, execution.Status);
+        Assert.Equal("tool_timeout", execution.ErrorCode);
+        Assert.Equal(now.AddSeconds(1), execution.CompletedAtUtc);
+        Assert.Throws<InvalidOperationException>(() => execution.Succeed("{}", now));
+    }
+
+    [Fact]
+    public void Expired_Running_Execution_Has_Unknown_Outcome_Without_Replay()
+    {
+        var execution = NewExecution(Guid.NewGuid(), true);
+        var now = DateTimeOffset.UtcNow;
+        execution.Approve(Guid.NewGuid(), now);
+        execution.Start(now);
+        execution.MarkOutcomeUnknown(now.AddMinutes(1));
+
+        Assert.Equal(ToolExecutionStatus.OutcomeUnknown, execution.Status);
+        Assert.Equal("tool_outcome_unknown", execution.ErrorCode);
+        Assert.Equal(now.AddMinutes(1), execution.CompletedAtUtc);
+        Assert.Throws<InvalidOperationException>(() => execution.Start(now));
+        Assert.Throws<InvalidOperationException>(() => execution.MarkOutcomeUnknown(now));
+    }
+
+    [Fact]
+    public void Running_Cannot_Be_Cancelled_As_If_No_Side_Effect_Occurred()
+    {
+        var execution = NewExecution(Guid.NewGuid(), false);
+        execution.Start(DateTimeOffset.UtcNow);
+
+        Assert.Throws<InvalidOperationException>(
+            () => execution.Cancel(DateTimeOffset.UtcNow));
+    }
+
     [Fact]
     public void Registry_Rejects_Duplicate_Tool_Names()
     {

@@ -92,6 +92,37 @@ public sealed class ToolExecution
         Status = ToolExecutionStatus.Running;
     }
 
+    public void Cancel(DateTimeOffset cancelledAtUtc)
+    {
+        if (Status is not (ToolExecutionStatus.PendingApproval or ToolExecutionStatus.Ready))
+            throw new InvalidOperationException("Only executions that have not started can be cancelled.");
+
+        CompletedAtUtc = cancelledAtUtc;
+        Status = ToolExecutionStatus.Cancelled;
+    }
+
+    public void TimeOut(DateTimeOffset timedOutAtUtc)
+    {
+        if (Status != ToolExecutionStatus.Running)
+            throw new InvalidOperationException("Only running executions can time out.");
+
+        ErrorCode = "tool_timeout";
+        ErrorMessage = "Tool execution timed out.";
+        CompletedAtUtc = timedOutAtUtc;
+        Status = ToolExecutionStatus.TimedOut;
+    }
+
+    public void MarkOutcomeUnknown(DateTimeOffset detectedAtUtc)
+    {
+        if (Status != ToolExecutionStatus.Running)
+            throw new InvalidOperationException("Only running executions can have an unknown outcome.");
+
+        ErrorCode = "tool_outcome_unknown";
+        ErrorMessage = "Tool execution outcome requires operator review.";
+        CompletedAtUtc = detectedAtUtc;
+        Status = ToolExecutionStatus.OutcomeUnknown;
+    }
+
     public void Succeed(string resultJson, DateTimeOffset completedAtUtc)
     {
         if (Status != ToolExecutionStatus.Running)
