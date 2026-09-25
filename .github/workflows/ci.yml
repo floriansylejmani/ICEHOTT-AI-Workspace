@@ -60,6 +60,9 @@ jobs:
       - name: Test
         run: dotnet test backend/ICEHOTT.sln -c Release --no-build
 
+      - name: Benchmark harness dry-run
+        run: dotnet run --project backend/tools/ICEHOTT.Benchmarks/ICEHOTT.Benchmarks.csproj -c Release --no-build -- --dry-run
+
   frontend:
     runs-on: ubuntu-latest
     defaults:

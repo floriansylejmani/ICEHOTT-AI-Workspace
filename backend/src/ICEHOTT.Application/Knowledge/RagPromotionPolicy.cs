@@ -29,6 +29,20 @@ public sealed record RagPromotionRequirements(
             MinFaithfulness: 0.80,
             MinContextPrecision: 0.80,
             MinContextRecall: 0.80);
+
+    public static RagPromotionRequirements ProviderBenchmarkDefault { get; } =
+        new(
+            "rag-v2",
+            0.95,
+            0.95,
+            0.95,
+            1.0,
+            RequireOfflineSemanticEvidence: true,
+            MinGroundedness: 0.80,
+            MinAnswerRelevance: 0.80,
+            MinFaithfulness: 0.80,
+            MinContextPrecision: 0.80,
+            MinContextRecall: 0.80);
 }
 
 public sealed class RagPromotionPolicy(RagPromotionRequirements requirements)

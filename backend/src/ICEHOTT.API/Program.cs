@@ -116,7 +116,7 @@ builder.Services.AddScoped<EmbeddingProfileBuildService>();
 builder.Services.AddScoped<EmbeddingProfileActivationService>();
 builder.Services.AddScoped<RagBenchmarkRunner>();
 
-var promotionRequirements = RagPromotionRequirements.FoundationDefault with
+var promotionRequirements = RagPromotionRequirements.ProviderBenchmarkDefault with
 {
     RequireOfflineSemanticEvidence = builder.Configuration.GetValue<bool>(
         "RagPromotion:RequireOfflineSemanticEvidence")
