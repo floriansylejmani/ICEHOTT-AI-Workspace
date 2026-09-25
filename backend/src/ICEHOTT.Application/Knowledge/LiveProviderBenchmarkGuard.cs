@@ -51,6 +51,19 @@ public static class LiveProviderBenchmarkGuard
                 "Benchmark database must be fresh and contain no users, workspaces, or knowledge documents.");
     }
 
+    public static void EnsureEstimatedMaximumWithinApprovedCost(
+        decimal estimatedMaximumCostUsd,
+        decimal approvedMaxCostUsd)
+    {
+        if (estimatedMaximumCostUsd <= 0)
+            throw new InvalidOperationException(
+                "Benchmark maximum-cost estimate must be positive.");
+
+        if (estimatedMaximumCostUsd > approvedMaxCostUsd)
+            throw new InvalidOperationException(
+                $"Conservative benchmark cost estimate {estimatedMaximumCostUsd:F6} USD exceeds the approved cap {approvedMaxCostUsd:F6} USD.");
+    }
+
     public static void EnsureWithinApprovedCost(
         decimal? measuredCostUsd,
         decimal approvedMaxCostUsd)

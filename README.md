@@ -97,8 +97,11 @@ ICEHOTT is a production-oriented AI workspace for agentic work: knowledge, tools
 - Real PostgreSQL/pgvector activation rollback/swap integration tests
 - `rag-v2` expanded evaluation corpus with SHA-256 freeze and tenant-isolation fixture
 - Opt-in live provider benchmark CLI with fresh-database, secret, pricing, and cost-cap guards
+- Bounded offline semantic judge with structured evidence and no external evaluation of safety-only cases
 - CI benchmark dry-run verifies the frozen corpus without provider cost
-- Live paid-provider benchmark and activation remain gated behind explicit credentials/cost authorization
+- Authorized `rag-v2` live benchmark PASS for OpenAI `text-embedding-3-small`: deterministic metrics 1.00, offline semantic metrics 1.00, tenant leakage 0, promotion policy PASS
+- Measured full-gate provider cost $0.00100536 under the approved $0.05 cap
+- Candidate activation remains a separate reviewed operation and is never performed automatically by benchmark code
 
 ## Architecture
 

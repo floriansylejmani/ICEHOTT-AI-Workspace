@@ -14,7 +14,8 @@ using Microsoft.Extensions.Options;
 
 const string datasetRelativePath = "evals/rag/v2/dataset.json";
 const string hashRelativePath = "evals/rag/v2/dataset.sha256";
-const string runnerVersion = "phase-3.6b-live-v1";
+const string runnerVersion = "phase-3.6b-live-v2";
+const string semanticRunnerVersion = "phase-3.6b-semantic-v1";
 
 var mode = args.Length == 1 ? args[0].Trim().ToLowerInvariant() : "";
 if (mode is not "--dry-run" and not "--live")
@@ -43,15 +44,20 @@ if (mode == "--dry-run")
             primaryChunks = corpusStats.PrimaryChunks,
             foreignChunks = corpusStats.ForeignChunks,
             expectedDocumentEmbeddingCalls = corpusStats.ExpectedDocumentEmbeddingCalls,
-            expectedQueryEmbeddingCalls = dataset.Cases.Length,
-            expectedTotalProviderCalls =
-                corpusStats.ExpectedDocumentEmbeddingCalls + dataset.Cases.Length,
+            expectedQueryEmbeddingCalls = dataset.Cases.Length * 2,
+            expectedSemanticJudgeCalls =
+                dataset.Cases.Count(x => x.ExpectedSources.Length > 0),
+            expectedTotalEmbeddingCalls =
+                corpusStats.ExpectedDocumentEmbeddingCalls +
+                dataset.Cases.Length * 2,
             liveRequirements = new[]
             {
                 "ICEHOTT_BENCHMARK_CONNECTION",
                 "ICEHOTT_LIVE_PROVIDER_BENCHMARK_OPT_IN",
                 "OPENAI_API_KEY or ICEHOTT_OPENAI_API_KEY",
                 "ICEHOTT_OPENAI_EMBEDDING_USD_PER_MILLION_INPUT_TOKENS",
+                "ICEHOTT_OPENAI_EVAL_INPUT_USD_PER_MILLION_TOKENS",
+                "ICEHOTT_OPENAI_EVAL_OUTPUT_USD_PER_MILLION_TOKENS",
                 "ICEHOTT_LIVE_BENCHMARK_MAX_COST_USD"
             },
             activationPerformed = false
@@ -88,6 +94,28 @@ try
         "ICEHOTT_LIVE_BENCHMARK_MAX_COST_USD");
     var usdPerMillionInputTokens = ParseRequiredDecimal(
         "ICEHOTT_OPENAI_EMBEDDING_USD_PER_MILLION_INPUT_TOKENS");
+    var semanticModel =
+        Environment.GetEnvironmentVariable("ICEHOTT_OPENAI_EVAL_MODEL") ??
+        "gpt-6-luna";
+    var semanticInputUsdPerMillionTokens = ParseRequiredDecimal(
+        "ICEHOTT_OPENAI_EVAL_INPUT_USD_PER_MILLION_TOKENS");
+    var semanticOutputUsdPerMillionTokens = ParseRequiredDecimal(
+        "ICEHOTT_OPENAI_EVAL_OUTPUT_USD_PER_MILLION_TOKENS");
+    var semanticTimeoutSeconds = ParseOptionalInt(
+        "ICEHOTT_OPENAI_EVAL_TIMEOUT_SECONDS",
+        60,
+        min: 5,
+        max: 300);
+    var semanticMaxInputBytes = ParseOptionalInt(
+        "ICEHOTT_OPENAI_EVAL_MAX_INPUT_BYTES",
+        8192,
+        min: 1024,
+        max: 65536);
+    var semanticMaxOutputTokens = ParseOptionalInt(
+        "ICEHOTT_OPENAI_EVAL_MAX_OUTPUT_TOKENS",
+        256,
+        min: 64,
+        max: 2048);
 
     if (string.IsNullOrWhiteSpace(connectionString))
     {
@@ -99,6 +127,19 @@ try
             "ICEHOTT_BENCHMARK_CONNECTION is required.");
         return 2;
     }
+
+    var estimatedMaximumCostUsd = EstimateMaximumProviderCostUsd(
+        dataset,
+        corpusStats,
+        usdPerMillionInputTokens,
+        semanticInputUsdPerMillionTokens,
+        semanticOutputUsdPerMillionTokens,
+        semanticMaxInputBytes,
+        semanticMaxOutputTokens);
+
+    LiveProviderBenchmarkGuard.EnsureEstimatedMaximumWithinApprovedCost(
+        estimatedMaximumCostUsd,
+        approvedMaxCostUsd);
 
     var dbOptions = new DbContextOptionsBuilder<ICEHOTTDbContext>()
         .UseNpgsql(connectionString)
@@ -133,7 +174,7 @@ try
         Timeout = TimeSpan.FromSeconds(timeoutSeconds)
     };
 
-    var provider = new OpenAiEmbeddingProvider(
+    var rawProvider = new OpenAiEmbeddingProvider(
         httpClient,
         Options.Create(new OpenAiEmbeddingOptions
         {
@@ -141,6 +182,7 @@ try
             BaseUrl = baseUrl,
             TimeoutSeconds = timeoutSeconds
         }));
+    var provider = new MeteringEmbeddingProvider(rawProvider);
 
     IEmbeddingProviderRegistry providerRegistry =
         new EmbeddingProviderRegistry(
@@ -193,9 +235,11 @@ try
         new HybridRagReranker(),
         new RetrievedContentPolicy());
 
+    var evidenceRepository =
+        new RagEvaluationEvidenceRepository(db);
     var benchmarkRunner = new RagBenchmarkRunner(
         retriever,
-        new RagEvaluationEvidenceRepository(db),
+        evidenceRepository,
         db,
         TimeProvider.System);
 
@@ -208,7 +252,12 @@ try
                 testCase.ExpectedSources,
                 testCase.ForbiddenSources,
                 testCase.TopK,
-                testCase.TenantForbiddenSources))
+                testCase.TenantForbiddenSources,
+                IsNegativeSafetyControl:
+                    string.Equals(
+                        testCase.Category,
+                        "safety",
+                        StringComparison.OrdinalIgnoreCase)))
             .ToArray(),
         new RagBenchmarkThresholds(
             dataset.Thresholds.HitRateAtK,
@@ -224,12 +273,78 @@ try
         runnerVersion,
         new RagBenchmarkPricing(usdPerMillionInputTokens));
 
+    var promotionRequirements =
+        RagPromotionRequirements.ProviderBenchmarkDefault;
+
+    OfflineSemanticEvaluationResult? offline = null;
+    string? semanticSkipReason = null;
+
+    if (benchmark.ThresholdsPassed &&
+        benchmark.Evidence.TenantLeakageCount == 0)
+    {
+        using var semanticHttpClient = new HttpClient
+        {
+            BaseAddress = new Uri(baseUrl.TrimEnd('/') + "/"),
+            Timeout = TimeSpan.FromSeconds(semanticTimeoutSeconds)
+        };
+
+        var semanticJudge = new OpenAiSemanticEvaluationJudge(
+            semanticHttpClient,
+            Options.Create(new OpenAiSemanticEvaluationOptions
+            {
+                ApiKey = apiKey!,
+                BaseUrl = baseUrl,
+                Model = semanticModel,
+                TimeoutSeconds = semanticTimeoutSeconds,
+                MaxInputBytes = semanticMaxInputBytes,
+                MaxOutputTokens = semanticMaxOutputTokens
+            }));
+
+        var offlineRunner = new OfflineSemanticEvaluationRunner(
+            retriever,
+            semanticJudge,
+            evidenceRepository,
+            db,
+            TimeProvider.System);
+
+        offline = await offlineRunner.RunAsync(
+            seeded.PrimaryWorkspaceId,
+            profile,
+            BuildOfflineSemanticDataset(dataset),
+            new OfflineSemanticEvaluationThresholds(
+                promotionRequirements.MinGroundedness,
+                promotionRequirements.MinAnswerRelevance,
+                promotionRequirements.MinFaithfulness,
+                promotionRequirements.MinContextPrecision,
+                promotionRequirements.MinContextRecall,
+                promotionRequirements.MinCitationCorrectness,
+                TenantLeakageCount: 0),
+            semanticRunnerVersion,
+            new OfflineSemanticEvaluationPricing(
+                usdPerMillionInputTokens,
+                semanticInputUsdPerMillionTokens,
+                semanticOutputUsdPerMillionTokens));
+    }
+    else
+    {
+        semanticSkipReason =
+            "Offline semantic evaluation was skipped because deterministic benchmark gates did not pass.";
+    }
+
+    var measuredTotalCostUsd = ComputeMeasuredTotalCostUsd(
+        provider.TotalInputTokens,
+        offline?.JudgeInputTokens ?? 0,
+        offline?.JudgeOutputTokens ?? 0,
+        usdPerMillionInputTokens,
+        semanticInputUsdPerMillionTokens,
+        semanticOutputUsdPerMillionTokens);
+
     var costWithinApprovedCap = true;
     string? costFailure = null;
     try
     {
         LiveProviderBenchmarkGuard.EnsureWithinApprovedCost(
-            benchmark.EstimatedCostUsd,
+            measuredTotalCostUsd,
             approvedMaxCostUsd);
     }
     catch (InvalidOperationException exception)
@@ -238,9 +353,37 @@ try
         costFailure = exception.Message;
     }
 
+    var promotionPolicyPassed = false;
+    string? promotionFailure = null;
+
+    if (offline is not null)
+    {
+        try
+        {
+            new RagPromotionPolicy(promotionRequirements).Validate(
+                profile,
+                benchmark.Evidence,
+                offline.Evidence);
+            promotionPolicyPassed = true;
+        }
+        catch (InvalidOperationException exception)
+        {
+            promotionFailure = exception.Message;
+        }
+    }
+    else
+    {
+        promotionFailure = semanticSkipReason ??
+            "Offline semantic evidence was not produced.";
+    }
+
     var releaseGatePassed =
         benchmark.ThresholdsPassed &&
         benchmark.Evidence.TenantLeakageCount == 0 &&
+        offline is not null &&
+        offline.ThresholdsPassed &&
+        offline.Evidence.TenantLeakageCount == 0 &&
+        promotionPolicyPassed &&
         costWithinApprovedCap;
 
     await WriteJsonAsync(
@@ -250,6 +393,8 @@ try
             success = releaseGatePassed,
             runId,
             completedAtUtc = DateTimeOffset.UtcNow,
+            runnerVersion,
+            semanticRunnerVersion,
             dataset = new
             {
                 version = dataset.Version,
@@ -278,7 +423,7 @@ try
                 build.EmbeddedChunkCount,
                 build.MissingChunkCount
             },
-            benchmark = new
+            deterministic = new
             {
                 evidenceId = benchmark.Evidence.Id,
                 benchmark.Evidence.HitRateAtK,
@@ -289,14 +434,49 @@ try
                 benchmark.InputTokens,
                 benchmark.DurationMs,
                 benchmark.EstimatedCostUsd,
+                benchmark.ThresholdsPassed
+            },
+            offlineSemantic = offline is null
+                ? null
+                : new
+                {
+                    evidenceId = offline.Evidence.Id,
+                    judgeProvider = "openai",
+                    judgeModel = semanticModel,
+                    offline.SemanticCaseCount,
+                    offline.Evidence.Groundedness,
+                    offline.Evidence.AnswerRelevance,
+                    offline.Evidence.Faithfulness,
+                    offline.Evidence.ContextPrecision,
+                    offline.Evidence.ContextRecall,
+                    offline.Evidence.CitationCorrectness,
+                    offline.Evidence.TenantLeakageCount,
+                    offline.EmbeddingInputTokens,
+                    offline.JudgeInputTokens,
+                    offline.JudgeOutputTokens,
+                    offline.DurationMs,
+                    offline.EstimatedCostUsd,
+                    offline.ThresholdsPassed
+                },
+            providerUsage = new
+            {
+                provider.DocumentInputTokens,
+                provider.QueryInputTokens,
+                provider.TotalInputTokens,
+                provider.DocumentCalls,
+                provider.QueryCalls,
+                estimatedMaximumCostUsd,
+                measuredTotalCostUsd,
                 approvedMaxCostUsd,
                 costWithinApprovedCap,
-                costFailure,
-                benchmark.ThresholdsPassed
+                costFailure
             },
             promotion = new
             {
-                offlineSemanticEvidenceRequired = true,
+                offlineSemanticEvidenceRequired =
+                    promotionRequirements.RequireOfflineSemanticEvidence,
+                promotionPolicyPassed,
+                promotionFailure,
                 activationPerformed = false,
                 releaseGatePassed
             }
@@ -449,6 +629,112 @@ static CorpusStats ComputeCorpusStats(
         primaryChunks,
         foreignChunks,
         Calls(primaryChunks) + Calls(foreignChunks));
+}
+
+static OfflineSemanticEvaluationDataset BuildOfflineSemanticDataset(
+    LiveDataset dataset)
+{
+    var documentsBySource = dataset.Documents
+        .ToDictionary(
+            x => x.SourceName,
+            StringComparer.OrdinalIgnoreCase);
+
+    var cases = dataset.Cases.Select(testCase =>
+    {
+        var referenceFacts = testCase.ExpectedSources
+            .Select(source =>
+                documentsBySource.TryGetValue(source, out var document)
+                    ? document.Content
+                    : throw new InvalidOperationException(
+                        $"Expected source '{source}' was not found in dataset '{dataset.Version}'."))
+            .ToArray();
+
+        return new OfflineSemanticEvaluationCase(
+            testCase.Id,
+            testCase.Query,
+            testCase.ExpectedSources,
+            testCase.ForbiddenSources,
+            testCase.TenantForbiddenSources,
+            referenceFacts,
+            testCase.TopK,
+            IsNegativeSafetyControl:
+                string.Equals(
+                    testCase.Category,
+                    "safety",
+                    StringComparison.OrdinalIgnoreCase));
+    }).ToArray();
+
+    return new OfflineSemanticEvaluationDataset(
+        dataset.Version,
+        cases);
+}
+
+static decimal EstimateMaximumProviderCostUsd(
+    LiveDataset dataset,
+    CorpusStats corpusStats,
+    decimal embeddingUsdPerMillionInputTokens,
+    decimal judgeUsdPerMillionInputTokens,
+    decimal judgeUsdPerMillionOutputTokens,
+    int semanticMaxInputBytes,
+    int semanticMaxOutputTokens)
+{
+    const int embeddingMaxTokensPerInput = 8192;
+
+    var embeddingInputCount =
+        corpusStats.PrimaryChunks +
+        corpusStats.ForeignChunks +
+        dataset.Cases.Length * 2;
+
+    var embeddingMaxTokens =
+        (long)embeddingInputCount *
+        embeddingMaxTokensPerInput;
+
+    var semanticCaseCount =
+        dataset.Cases.Count(x => x.ExpectedSources.Length > 0);
+
+    // The judge rejects prompts above semanticMaxInputBytes. Since a tokenizer
+    // cannot produce more tokens than the UTF-8 byte sequence supplied, bytes
+    // are a conservative token ceiling for preflight cost control.
+    var judgeMaxInputTokens =
+        (long)semanticCaseCount *
+        semanticMaxInputBytes;
+    var judgeMaxOutputTokens =
+        (long)semanticCaseCount *
+        semanticMaxOutputTokens;
+
+    return
+        embeddingMaxTokens *
+        embeddingUsdPerMillionInputTokens /
+        1_000_000m +
+        judgeMaxInputTokens *
+        judgeUsdPerMillionInputTokens /
+        1_000_000m +
+        judgeMaxOutputTokens *
+        judgeUsdPerMillionOutputTokens /
+        1_000_000m;
+}
+
+static decimal? ComputeMeasuredTotalCostUsd(
+    int? embeddingInputTokens,
+    int judgeInputTokens,
+    int judgeOutputTokens,
+    decimal embeddingUsdPerMillionInputTokens,
+    decimal judgeUsdPerMillionInputTokens,
+    decimal judgeUsdPerMillionOutputTokens)
+{
+    if (embeddingInputTokens is null)
+        return null;
+
+    return
+        embeddingInputTokens.Value *
+        embeddingUsdPerMillionInputTokens /
+        1_000_000m +
+        judgeInputTokens *
+        judgeUsdPerMillionInputTokens /
+        1_000_000m +
+        judgeOutputTokens *
+        judgeUsdPerMillionOutputTokens /
+        1_000_000m;
 }
 
 static async Task<LiveDataset> LoadAndVerifyDatasetAsync(
@@ -608,8 +894,16 @@ static void PrintUsage()
           ICEHOTT_BENCHMARK_CONNECTION=<dedicated fresh PostgreSQL database containing 'benchmark' in its name>
           ICEHOTT_LIVE_PROVIDER_BENCHMARK_OPT_IN=I_UNDERSTAND_THIS_USES_PAID_API
           OPENAI_API_KEY=<server-side secret>  (or ICEHOTT_OPENAI_API_KEY)
-          ICEHOTT_OPENAI_EMBEDDING_USD_PER_MILLION_INPUT_TOKENS=<approved pricing metadata>
+          ICEHOTT_OPENAI_EMBEDDING_USD_PER_MILLION_INPUT_TOKENS=<approved embedding pricing metadata>
+          ICEHOTT_OPENAI_EVAL_INPUT_USD_PER_MILLION_TOKENS=<approved judge input pricing metadata>
+          ICEHOTT_OPENAI_EVAL_OUTPUT_USD_PER_MILLION_TOKENS=<approved judge output pricing metadata>
           ICEHOTT_LIVE_BENCHMARK_MAX_COST_USD=<approved maximum benchmark cost>
+
+        Optional live environment:
+          ICEHOTT_OPENAI_EVAL_MODEL=gpt-6-luna
+          ICEHOTT_OPENAI_EVAL_TIMEOUT_SECONDS=60
+          ICEHOTT_OPENAI_EVAL_MAX_INPUT_BYTES=8192
+          ICEHOTT_OPENAI_EVAL_MAX_OUTPUT_TOKENS=256
 
         The harness never activates the candidate profile.
         """);
@@ -655,3 +949,61 @@ internal sealed record CorpusStats(
     int PrimaryChunks,
     int ForeignChunks,
     int ExpectedDocumentEmbeddingCalls);
+
+internal sealed class MeteringEmbeddingProvider(
+    IEmbeddingProvider inner)
+    : IEmbeddingProvider
+{
+    public string Provider => inner.Provider;
+    public EmbeddingProviderCapabilities Capabilities =>
+        inner.Capabilities;
+
+    public int DocumentCalls { get; private set; }
+    public int QueryCalls { get; private set; }
+    public int? DocumentInputTokens { get; private set; } = 0;
+    public int? QueryInputTokens { get; private set; } = 0;
+
+    public int? TotalInputTokens =>
+        DocumentInputTokens is int documentTokens &&
+        QueryInputTokens is int queryTokens
+            ? documentTokens + queryTokens
+            : null;
+
+    public async Task<EmbeddingBatch> EmbedAsync(
+        EmbeddingProfileDescriptor profile,
+        EmbeddingPurpose purpose,
+        IReadOnlyList<string> texts,
+        CancellationToken cancellationToken = default)
+    {
+        var reply = await inner.EmbedAsync(
+            profile,
+            purpose,
+            texts,
+            cancellationToken);
+
+        if (purpose == EmbeddingPurpose.Document)
+        {
+            DocumentCalls++;
+            DocumentInputTokens = AddUsage(
+                DocumentInputTokens,
+                reply.Usage?.InputTokens);
+        }
+        else
+        {
+            QueryCalls++;
+            QueryInputTokens = AddUsage(
+                QueryInputTokens,
+                reply.Usage?.InputTokens);
+        }
+
+        return reply;
+    }
+
+    private static int? AddUsage(
+        int? runningTotal,
+        int? inputTokens) =>
+        runningTotal is int total &&
+        inputTokens is int measured
+            ? total + measured
+            : null;
+}

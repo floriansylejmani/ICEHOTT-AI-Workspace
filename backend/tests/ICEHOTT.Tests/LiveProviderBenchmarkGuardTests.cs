@@ -84,6 +84,19 @@ public sealed class LiveProviderBenchmarkGuardTests
     }
 
     [Fact]
+    public void Estimated_Cost_Guard_Fails_Before_Live_Run_When_Cap_Is_Too_Low()
+    {
+        LiveProviderBenchmarkGuard.EnsureEstimatedMaximumWithinApprovedCost(
+            0.01m,
+            0.02m);
+
+        Assert.Throws<InvalidOperationException>(() =>
+            LiveProviderBenchmarkGuard.EnsureEstimatedMaximumWithinApprovedCost(
+                0.03m,
+                0.02m));
+    }
+
+    [Fact]
     public void Cost_Guard_Requires_Measured_Usage_Within_Cap()
     {
         LiveProviderBenchmarkGuard.EnsureWithinApprovedCost(0.01m, 0.02m);

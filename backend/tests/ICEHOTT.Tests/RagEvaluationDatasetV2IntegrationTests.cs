@@ -141,7 +141,12 @@ public sealed class RagEvaluationDatasetV2IntegrationTests : IClassFixture<Iceho
                 evaluationCase.ExpectedSources,
                 retrievedSources,
                 citationCorrect,
-                tenantLeakage));
+                tenantLeakage,
+                IsNegativeSafetyControl:
+                    string.Equals(
+                        evaluationCase.Category,
+                        "safety",
+                        StringComparison.OrdinalIgnoreCase)));
         }
 
         var misses = observations
