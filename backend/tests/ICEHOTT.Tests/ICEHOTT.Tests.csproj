@@ -1,4 +1,4 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <TargetFramework>net9.0</TargetFramework>
@@ -32,6 +32,12 @@
   <ItemGroup>
     <Content Include="..\..\..\evals\rag\v1\dataset.json"
              Link="evals\rag\v1\dataset.json"
+             CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="..\..\..\evals\rag\v2\dataset.json"
+             Link="evals\rag\v2\dataset.json"
+             CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="..\..\..\evals\rag\v2\dataset.sha256"
+             Link="evals\rag\v2\dataset.sha256"
              CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
