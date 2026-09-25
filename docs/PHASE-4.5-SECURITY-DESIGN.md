@@ -1,7 +1,7 @@
 # Phase 4.5 — Security, Approvals & Audit Hardening
 
-Status: design for review; no Phase 4.5 product code is implemented.
-Base: `main@3c1b832`. Phase 4 is merged and validated there.
+Status: implementation integrated on `phase-4.5-finalization`; local release gate passed, pending remote CI and merge review.
+Base: `main@3c1b832`. Phase 4 is merged and validated there; Phase 4.5 remains off `main` until the final gate is approved.
 
 ## Intent and scope
 

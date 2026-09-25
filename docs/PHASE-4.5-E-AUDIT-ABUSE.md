@@ -83,5 +83,5 @@ Release-gate evidence collected on 2026-09-25:
   append-only trigger definitions;
 - migration rollback/reapply test: passed.
 
-The release branch still requires normal Git diff review, Docker image build and
-remote CI before merge to `main`.
+The local Git diff review and Docker image builds for `api` and `ai` have passed.
+Remote CI on the exact pushed commit remains required before merge to `main`.
