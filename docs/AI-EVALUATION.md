@@ -39,6 +39,8 @@ These checks validate RAG mechanics and failure handling. They do not establish 
 
 Phase 3.6B Foundation validates provider contracts and blue/green promotion mechanics with mocks and real PostgreSQL/pgvector. It does not claim semantic superiority for OpenAI, Voyage, Cohere, or any other provider without a live benchmark.
 
+Phase 3.6B evaluation dataset v2 expands the deterministic corpus to 13 synthetic documents and 18 cases across support, security, retention, reliability, billing, identity, data management, API, residency, prompt-injection safety, and tenant isolation. The exact corpus is hash-locked in `evals/rag/v2/dataset.sha256`. Passing v2 is a prerequisite for the opt-in live provider benchmark; it is not by itself a semantic-quality claim.
+
 ## Agent metrics
 - Task completion rate
 - Tool-call success rate
