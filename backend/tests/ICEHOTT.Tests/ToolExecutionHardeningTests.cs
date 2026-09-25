@@ -237,6 +237,8 @@ public sealed class ToolExecutionHardeningTests(ToolSecurityFixture fx)
             scope.ServiceProvider.GetRequiredService<IToolPolicyRepository>(),
             new ToolRegistry([new SlowTool()]),
             TimeProvider.System,
+            scope.ServiceProvider.GetRequiredService<ToolQuotaOptions>(),
+            scope.ServiceProvider.GetRequiredService<IToolOperationalLog>(),
             TimeSpan.FromMilliseconds(50));
 
         var result = await service.RequestAsync(
@@ -261,6 +263,8 @@ public sealed class ToolExecutionHardeningTests(ToolSecurityFixture fx)
             scope.ServiceProvider.GetRequiredService<IToolPolicyRepository>(),
             new ToolRegistry([new SlowSensitiveTool()]),
             TimeProvider.System,
+            scope.ServiceProvider.GetRequiredService<ToolQuotaOptions>(),
+            scope.ServiceProvider.GetRequiredService<IToolOperationalLog>(),
             TimeSpan.FromMilliseconds(50));
 
         var pending = await service.RequestAsync(

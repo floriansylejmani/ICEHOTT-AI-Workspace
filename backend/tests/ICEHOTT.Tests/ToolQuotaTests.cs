@@ -371,6 +371,9 @@ public sealed class ToolQuotaTests(ToolBudgetFixture fx) : IClassFixture<ToolBud
         public Task<IReadOnlyList<ToolExecution>> ListAsync(Guid workspaceId, int limit, CancellationToken cancellationToken = default) =>
             inner.ListAsync(workspaceId, limit, cancellationToken);
 
+        public Task<IReadOnlyList<ToolExecution>> ListExpiredRunningAsync(DateTimeOffset now, int limit, CancellationToken cancellationToken = default) =>
+            inner.ListExpiredRunningAsync(now, limit, cancellationToken);
+
         public Task<IReadOnlyList<ToolExecutionAuditEvent>> ListAuditEventsAsync(
             Guid workspaceId, Guid executionId, CancellationToken cancellationToken = default) =>
             inner.ListAuditEventsAsync(workspaceId, executionId, cancellationToken);
