@@ -178,6 +178,25 @@ public sealed class ToolExecutionIntegrationTests
         Assert.Contains(due, x => x.Id == legacy.Id);
         Assert.DoesNotContain(due, x => x.Id == active.Id);
         Assert.DoesNotContain(due, x => x.Id == completed.Id);
+
+        var recovery = scope.ServiceProvider.GetRequiredService<
+            ICEHOTT.Application.Tools.ToolExecutionRecoveryService>();
+        Assert.Equal(2, await recovery.RecoverExpiredAsync(now));
+        Assert.Equal(0, await recovery.RecoverExpiredAsync(now));
+
+        Assert.Equal(ToolExecutionStatus.OutcomeUnknown, expired.Status);
+        Assert.Equal(ToolExecutionStatus.OutcomeUnknown, legacy.Status);
+        Assert.Equal(ToolExecutionStatus.Running, active.Status);
+        Assert.Equal(ToolExecutionStatus.Succeeded, completed.Status);
+        var recoveredEvents = await db.ToolExecutionAuditEvents
+            .Where(x => x.ExecutionId == expired.Id || x.ExecutionId == legacy.Id)
+            .ToListAsync();
+        Assert.Equal(2, recoveredEvents.Count);
+        Assert.All(recoveredEvents, x =>
+        {
+            Assert.Equal(ToolExecutionAuditEventType.OutcomeUnknown, x.EventType);
+            Assert.Null(x.ActorUserId);
+        });
     }
 
     [Fact]

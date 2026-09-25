@@ -128,6 +128,7 @@ builder.Services.AddScoped<IWorkspaceTool, WorkspaceEchoTool>();
 builder.Services.AddScoped<IWorkspaceTool, WorkspaceAuditNoteCreateTool>();
 builder.Services.AddScoped<IToolRegistry, ToolRegistry>();
 builder.Services.AddScoped<ToolExecutionService>();
+builder.Services.AddScoped<ToolExecutionRecoveryService>();
 builder.Services.AddScoped<ToolPolicyService>();
 
 var promotionRequirements = RagPromotionRequirements.ProviderBenchmarkDefault with
@@ -140,6 +141,7 @@ builder.Services.AddSingleton<RagPromotionPolicy>();
 
 if (knowledgeWorker.Enabled)
     builder.Services.AddHostedService<KnowledgeIngestionWorker>();
+builder.Services.AddHostedService<ToolExecutionRecoveryWorker>();
 
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer(options => options.TokenValidationParameters = new TokenValidationParameters
