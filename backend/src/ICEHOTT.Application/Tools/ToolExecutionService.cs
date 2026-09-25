@@ -11,9 +11,14 @@ public sealed class ToolExecutionService(
     IWorkspaceRepository workspaces,
     IToolExecutionRepository executions,
     IToolRegistry registry,
-    IUnitOfWork unitOfWork,
     TimeProvider clock)
 {
+    /// <summary>
+    /// Upper bound on the canonical JSON persisted per execution. Per-tool
+    /// schemas are far smaller; this is a backstop for future tools.
+    /// </summary>
+    public const int MaxArgumentsBytes = 16 * 1024;
+
     public async Task<ToolOperationResult<IReadOnlyList<ToolDefinitionView>>> ListToolsAsync(
         Guid userId,
         Guid workspaceId,
@@ -70,11 +75,27 @@ public sealed class ToolExecutionService(
                 "invalid_arguments",
                 ["Tool arguments must be a JSON object."]);
 
+        // JsonElement lookups resolve duplicate property names to the LAST
+        // occurrence, while canonicalization persists ALL occurrences. Without
+        // this check an earlier duplicate would be stored and hashed without
+        // ever being validated (type/length/control-character bypass).
+        if (HasDuplicateProperties(arguments))
+            return new(
+                null,
+                "invalid_arguments",
+                ["Tool arguments must not contain duplicate property names."]);
+
         var validation = tool.ValidateArguments(arguments);
         if (!validation.IsValid)
             return new(null, "invalid_arguments", validation.Errors);
 
         var canonicalArguments = Canonicalize(arguments);
+        if (Encoding.UTF8.GetByteCount(canonicalArguments) > MaxArgumentsBytes)
+            return new(
+                null,
+                "invalid_arguments",
+                [$"Tool arguments must be at most {MaxArgumentsBytes} bytes."]);
+
         var argumentsHash = Convert.ToHexString(
                 SHA256.HashData(Encoding.UTF8.GetBytes(canonicalArguments)))
             .ToLowerInvariant();
@@ -86,17 +107,10 @@ public sealed class ToolExecutionService(
             cancellationToken);
 
         if (existing is not null)
-        {
-            if (!string.Equals(
-                    existing.ArgumentsHash,
-                    argumentsHash,
-                    StringComparison.Ordinal))
-                return new(null, "idempotency_conflict");
-
-            return new(
-                await MapExecutionAsync(existing, cancellationToken),
-                null);
-        }
+            return await ReplayAsync(
+                existing,
+                argumentsHash,
+                cancellationToken);
 
         var now = clock.GetUtcNow();
         var execution = new ToolExecution(
@@ -119,7 +133,26 @@ public sealed class ToolExecutionService(
                 userId,
                 now),
             cancellationToken);
-        await unitOfWork.SaveChangesAsync(cancellationToken);
+
+        var inserted = await executions.SaveChangesAsync(cancellationToken);
+        if (inserted == ToolPersistenceOutcome.DuplicateIdempotencyKey)
+        {
+            // Lost an insert race against a concurrent request with the same
+            // key. The unique index guarantees only one row exists; return it
+            // instead of surfacing a 500, and never run the handler here.
+            var winner = await executions.FindByIdempotencyAsync(
+                workspaceId,
+                tool.Definition.Name,
+                idempotencyKey.Trim(),
+                cancellationToken);
+
+            return winner is null
+                ? new(null, "idempotency_conflict")
+                : await ReplayAsync(winner, argumentsHash, cancellationToken);
+        }
+
+        if (inserted != ToolPersistenceOutcome.Saved)
+            return new(null, "invalid_state");
 
         if (execution.Status == ToolExecutionStatus.PendingApproval)
             return new(
@@ -237,6 +270,11 @@ public sealed class ToolExecutionService(
         if (execution.Status != ToolExecutionStatus.PendingApproval)
             return new(null, "invalid_state");
 
+        // The handler runs with the requester's identity (for example the
+        // audit note's CreatedByUserId). Authority is re-resolved from the
+        // database at approval time: a requester who has since been removed
+        // from the workspace or demoted below the tool's requester role must
+        // not have the tool executed on their behalf.
         var requesterMembership = await workspaces.FindMembershipAsync(
             execution.RequestedByUserId,
             workspaceId,
@@ -255,7 +293,13 @@ public sealed class ToolExecutionService(
                 approverUserId,
                 now),
             cancellationToken);
-        await unitOfWork.SaveChangesAsync(cancellationToken);
+
+        // Guarded PendingApproval -> Ready transition. If a concurrent
+        // approve/reject already moved the row, nothing is committed and the
+        // handler is not run a second time.
+        if (await executions.SaveChangesAsync(cancellationToken) !=
+            ToolPersistenceOutcome.Saved)
+            return new(null, "invalid_state");
 
         return await ExecuteReadyAsync(
             execution,
@@ -313,7 +357,10 @@ public sealed class ToolExecutionService(
                 approverUserId,
                 now),
             cancellationToken);
-        await unitOfWork.SaveChangesAsync(cancellationToken);
+
+        if (await executions.SaveChangesAsync(cancellationToken) !=
+            ToolPersistenceOutcome.Saved)
+            return new(null, "invalid_state");
 
         return new(
             await MapExecutionAsync(execution, cancellationToken),
@@ -334,7 +381,12 @@ public sealed class ToolExecutionService(
                 execution.RequestedByUserId,
                 startedAt),
             cancellationToken);
-        await unitOfWork.SaveChangesAsync(cancellationToken);
+
+        // Guarded Ready -> Running claim: exactly one request can win it, so
+        // the handler below runs at most once per execution.
+        if (await executions.SaveChangesAsync(cancellationToken) !=
+            ToolPersistenceOutcome.Saved)
+            return new(null, "invalid_state");
 
         ToolExecutionOutput output;
         try
@@ -353,6 +405,7 @@ public sealed class ToolExecutionService(
         catch (OperationCanceledException)
             when (cancellationToken.IsCancellationRequested)
         {
+            executions.DiscardPendingSideEffects(execution);
             var cancelledAt = clock.GetUtcNow();
             execution.Fail(
                 "tool_cancelled",
@@ -365,12 +418,16 @@ public sealed class ToolExecutionService(
                     execution.RequestedByUserId,
                     cancelledAt),
                 CancellationToken.None);
-            await unitOfWork.SaveChangesAsync(
+            await executions.SaveChangesAsync(
                 CancellationToken.None);
             throw;
         }
         catch
         {
+            // A handler may have staged writes before throwing. They must not
+            // be committed together with the Failed status: a Failed execution
+            // has no side effects. Exception details are never persisted.
+            executions.DiscardPendingSideEffects(execution);
             var failedAt = clock.GetUtcNow();
             execution.Fail(
                 "tool_execution_failed",
@@ -383,7 +440,7 @@ public sealed class ToolExecutionService(
                     execution.RequestedByUserId,
                     failedAt),
                 cancellationToken);
-            await unitOfWork.SaveChangesAsync(cancellationToken);
+            await executions.SaveChangesAsync(cancellationToken);
 
             return new(
                 await MapExecutionAsync(
@@ -403,13 +460,63 @@ public sealed class ToolExecutionService(
                 execution.RequestedByUserId,
                 completedAt),
             cancellationToken);
-        await unitOfWork.SaveChangesAsync(cancellationToken);
+
+        // Handler side effects, the Succeeded status and the audit event
+        // commit atomically in one SaveChanges, guarded on Status = Running.
+        if (await executions.SaveChangesAsync(cancellationToken) !=
+            ToolPersistenceOutcome.Saved)
+            return new(null, "invalid_state");
 
         return new(
             await MapExecutionAsync(
                 execution,
                 cancellationToken),
             null);
+    }
+
+    private async Task<ToolOperationResult<ToolExecutionView>> ReplayAsync(
+        ToolExecution existing,
+        string argumentsHash,
+        CancellationToken cancellationToken)
+    {
+        // Same key + different arguments is a conflict; stored arguments of
+        // an existing execution are never replaced.
+        if (!string.Equals(
+                existing.ArgumentsHash,
+                argumentsHash,
+                StringComparison.Ordinal))
+            return new(null, "idempotency_conflict");
+
+        return new(
+            await MapExecutionAsync(existing, cancellationToken),
+            null);
+    }
+
+    private static bool HasDuplicateProperties(JsonElement element)
+    {
+        switch (element.ValueKind)
+        {
+            case JsonValueKind.Object:
+                var names = new HashSet<string>(StringComparer.Ordinal);
+                foreach (var property in element.EnumerateObject())
+                {
+                    if (!names.Add(property.Name) ||
+                        HasDuplicateProperties(property.Value))
+                        return true;
+                }
+                return false;
+
+            case JsonValueKind.Array:
+                foreach (var item in element.EnumerateArray())
+                {
+                    if (HasDuplicateProperties(item))
+                        return true;
+                }
+                return false;
+
+            default:
+                return false;
+        }
     }
 
     private async Task<ToolExecutionView> MapExecutionAsync(

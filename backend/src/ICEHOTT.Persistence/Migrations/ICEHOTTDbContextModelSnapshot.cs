@@ -529,6 +529,7 @@ namespace ICEHOTT.Persistence.Migrations
                         .HasColumnType("timestamp with time zone");
 
                     b.Property<int>("Status")
+                        .IsConcurrencyToken()
                         .HasColumnType("integer");
 
                     b.Property<string>("ToolName")
