@@ -26,6 +26,8 @@ public sealed class ICEHOTTDbContext(DbContextOptions<ICEHOTTDbContext> options)
     public DbSet<ToolExecution> ToolExecutions => Set<ToolExecution>();
     public DbSet<ToolExecutionAuditEvent> ToolExecutionAuditEvents => Set<ToolExecutionAuditEvent>();
     public DbSet<WorkspaceAuditNote> WorkspaceAuditNotes => Set<WorkspaceAuditNote>();
+    public DbSet<ToolPolicy> ToolPolicies => Set<ToolPolicy>();
+    public DbSet<ToolPolicyAuditEvent> ToolPolicyAuditEvents => Set<ToolPolicyAuditEvent>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {

@@ -1,9 +1,12 @@
+using ICEHOTT.Domain.Workspaces;
+
 namespace ICEHOTT.Domain.Tools;
 
 public sealed class ToolExecution
 {
     private ToolExecution() { }
 
+    /// <summary>Admission under built-in defaults (policy version 0).</summary>
     public ToolExecution(
         Guid id,
         Guid workspaceId,
@@ -15,7 +18,42 @@ public sealed class ToolExecution
         string idempotencyKey,
         bool requiresApproval,
         DateTimeOffset requestedAtUtc)
+        : this(
+            id, workspaceId, requestedByUserId, toolName, riskLevel,
+            argumentsJson, argumentsHash, idempotencyKey, requestedAtUtc,
+            new EffectiveToolPolicy(
+                0,
+                true,
+                WorkspaceRole.Member,
+                requiresApproval ? WorkspaceRole.Admin : null,
+                requiresApproval,
+                null))
     {
+    }
+
+    /// <summary>
+    /// Admission under an effective policy, which is snapshotted on the row.
+    /// Whether the execution needs approval is decided by the policy alone.
+    /// </summary>
+    public ToolExecution(
+        Guid id,
+        Guid workspaceId,
+        Guid requestedByUserId,
+        string toolName,
+        ToolRiskLevel riskLevel,
+        string argumentsJson,
+        string argumentsHash,
+        string idempotencyKey,
+        DateTimeOffset requestedAtUtc,
+        EffectiveToolPolicy policy)
+    {
+        ArgumentNullException.ThrowIfNull(policy);
+        if (!policy.Enabled)
+            throw new InvalidOperationException("A disabled tool cannot be admitted.");
+        if (policy.RequiresApproval && policy.MinimumApproverRole is null)
+            throw new ArgumentException("An approval policy needs an approver role.", nameof(policy));
+        var requiresApproval = policy.RequiresApproval;
+
         if (id == Guid.Empty) throw new ArgumentException("Execution ID is required.", nameof(id));
         if (workspaceId == Guid.Empty) throw new ArgumentException("Workspace ID is required.", nameof(workspaceId));
         if (requestedByUserId == Guid.Empty) throw new ArgumentException("Requester ID is required.", nameof(requestedByUserId));
@@ -34,7 +72,28 @@ public sealed class ToolExecution
         IdempotencyKey = idempotencyKey.Trim();
         Status = requiresApproval ? ToolExecutionStatus.PendingApproval : ToolExecutionStatus.Ready;
         RequestedAtUtc = requestedAtUtc;
+        PolicyVersion = policy.Version;
+        PolicyMinimumRequesterRole = policy.MinimumRequesterRole;
+        PolicyMinimumApproverRole = policy.MinimumApproverRole;
+        PolicyRequiresApproval = policy.RequiresApproval;
+        PolicyMaxArgumentLength = policy.MaxArgumentLength;
     }
+
+    // Effective policy snapshot at admission (Phase 4.5 packet B). Immutable.
+    public int PolicyVersion { get; private set; }
+    public WorkspaceRole PolicyMinimumRequesterRole { get; private set; } = WorkspaceRole.Member;
+    public WorkspaceRole? PolicyMinimumApproverRole { get; private set; }
+    public bool PolicyRequiresApproval { get; private set; }
+    public int? PolicyMaxArgumentLength { get; private set; }
+
+    public EffectiveToolPolicy PolicySnapshot =>
+        new(
+            PolicyVersion,
+            true,
+            PolicyMinimumRequesterRole,
+            PolicyMinimumApproverRole,
+            PolicyRequiresApproval,
+            PolicyMaxArgumentLength);
 
     public Guid Id { get; private set; }
     public Guid WorkspaceId { get; private set; }

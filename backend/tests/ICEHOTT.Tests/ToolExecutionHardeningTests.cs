@@ -175,6 +175,7 @@ public sealed class ToolExecutionHardeningTests(ToolSecurityFixture fx)
             var service = new ToolExecutionService(
                 scope.ServiceProvider.GetRequiredService<IWorkspaceRepository>(),
                 repository,
+                scope.ServiceProvider.GetRequiredService<IToolPolicyRepository>(),
                 new ToolRegistry([new CountingTool(calls)]),
                 TimeProvider.System);
 
@@ -193,6 +194,7 @@ public sealed class ToolExecutionHardeningTests(ToolSecurityFixture fx)
             var service = new ToolExecutionService(
                 scope.ServiceProvider.GetRequiredService<IWorkspaceRepository>(),
                 repository,
+                scope.ServiceProvider.GetRequiredService<IToolPolicyRepository>(),
                 new ToolRegistry([new CountingTool(calls)]),
                 TimeProvider.System);
 
@@ -234,6 +236,7 @@ public sealed class ToolExecutionHardeningTests(ToolSecurityFixture fx)
         new(
             scope.ServiceProvider.GetRequiredService<IWorkspaceRepository>(),
             scope.ServiceProvider.GetRequiredService<IToolExecutionRepository>(),
+            scope.ServiceProvider.GetRequiredService<IToolPolicyRepository>(),
             new ToolRegistry([tool]),
             TimeProvider.System);
 

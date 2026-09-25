@@ -22,7 +22,14 @@ public enum ToolPersistenceOutcome
     /// (workspace, tool, idempotency key). Nothing was committed and pending
     /// changes were discarded.
     /// </summary>
-    DuplicateIdempotencyKey = 3
+    DuplicateIdempotencyKey = 3,
+
+    /// <summary>
+    /// The tool policy row changed (or was first created) after it was read
+    /// for this decision. Nothing was committed and pending changes were
+    /// discarded; the caller must re-evaluate under the current policy.
+    /// </summary>
+    PolicyConflict = 4
 }
 
 public interface IToolExecutionRepository

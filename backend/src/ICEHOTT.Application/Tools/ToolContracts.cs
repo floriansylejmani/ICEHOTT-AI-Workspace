@@ -52,7 +52,8 @@ public sealed record ToolDefinitionView(
     WorkspaceRole MinimumRequesterRole,
     bool RequiresApproval,
     WorkspaceRole? MinimumApproverRole,
-    IReadOnlyList<ToolArgumentDefinition> Arguments);
+    IReadOnlyList<ToolArgumentDefinition> Arguments,
+    int PolicyVersion = 0);
 
 public sealed record ToolAuditEventView(
     ToolExecutionAuditEventType EventType,
@@ -76,7 +77,8 @@ public sealed record ToolExecutionView(
     JsonElement? Result,
     string? ErrorCode,
     string? ErrorMessage,
-    IReadOnlyList<ToolAuditEventView> AuditEvents);
+    IReadOnlyList<ToolAuditEventView> AuditEvents,
+    int PolicyVersion = 0);
 
 public sealed record ToolOperationResult<T>(
     T? Value,

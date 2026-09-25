@@ -10,6 +10,7 @@ namespace ICEHOTT.Application.Tools;
 public sealed class ToolExecutionService(
     IWorkspaceRepository workspaces,
     IToolExecutionRepository executions,
+    IToolPolicyRepository policies,
     IToolRegistry registry,
     TimeProvider clock)
 {
@@ -32,9 +33,18 @@ public sealed class ToolExecutionService(
         if (membership is null)
             return new(null, "workspace_not_found");
 
+        var overlays = await LoadOverlaysAsync(workspaceId, cancellationToken);
+
+        // D9: only enabled tools the caller may request, with effective values.
         var items = registry.All
-            .Where(tool => membership.Role >= tool.Definition.MinimumRequesterRole)
-            .Select(tool => Map(tool.Definition))
+            .Select(tool => (
+                tool.Definition,
+                Policy: ToolPolicyEvaluator.Effective(
+                    tool.Definition,
+                    overlays.GetValueOrDefault(tool.Definition.Name))))
+            .Where(x => x.Policy.Enabled &&
+                        membership.Role >= x.Policy.MinimumRequesterRole)
+            .Select(x => Map(x.Definition, x.Policy))
             .ToArray();
 
         return new(items, null);
@@ -60,8 +70,18 @@ public sealed class ToolExecutionService(
         if (tool is null)
             return new(null, "tool_not_found");
 
-        if (membership.Role < tool.Definition.MinimumRequesterRole)
+        // D7: the current effective policy decides admission.
+        var overlay = await policies.FindAsync(
+            workspaceId,
+            tool.Definition.Name,
+            cancellationToken);
+        var policy = ToolPolicyEvaluator.Effective(tool.Definition, overlay);
+
+        if (membership.Role < policy.MinimumRequesterRole)
             return new(null, "forbidden");
+
+        if (!policy.Enabled)
+            return new(null, "tool_disabled");
 
         if (!IsValidIdempotencyKey(idempotencyKey))
             return new(
@@ -88,6 +108,13 @@ public sealed class ToolExecutionService(
         var validation = tool.ValidateArguments(arguments);
         if (!validation.IsValid)
             return new(null, "invalid_arguments", validation.Errors);
+
+        var limitErrors = ToolPolicyEvaluator.CheckArgumentLimits(
+            tool.Definition,
+            policy,
+            arguments);
+        if (limitErrors.Count > 0)
+            return new(null, "invalid_arguments", limitErrors);
 
         var canonicalArguments = Canonicalize(arguments);
         if (Encoding.UTF8.GetByteCount(canonicalArguments) > MaxArgumentsBytes)
@@ -122,8 +149,8 @@ public sealed class ToolExecutionService(
             canonicalArguments,
             argumentsHash,
             idempotencyKey.Trim(),
-            tool.Definition.RequiresApproval,
-            now);
+            now,
+            policy);
 
         await executions.AddAsync(execution, cancellationToken);
         await executions.AddAuditEventAsync(
@@ -134,7 +161,21 @@ public sealed class ToolExecutionService(
                 now),
             cancellationToken);
 
+        // D6: an execution that runs right away is decided under the policy
+        // version just read; commit only if that version is still current.
+        // (A PendingApproval row is re-evaluated at approval instead.)
+        if (!policy.RequiresApproval)
+            await policies.GuardUnchangedAsync(
+                overlay,
+                workspaceId,
+                tool.Definition.Name,
+                now,
+                cancellationToken);
+
         var inserted = await executions.SaveChangesAsync(cancellationToken);
+        if (inserted == ToolPersistenceOutcome.PolicyConflict)
+            return new(null, "policy_changed");
+
         if (inserted == ToolPersistenceOutcome.DuplicateIdempotencyKey)
         {
             // Lost an insert race against a concurrent request with the same
@@ -184,11 +225,13 @@ public sealed class ToolExecutionService(
             Math.Clamp(limit, 1, 100),
             cancellationToken);
 
+        var overlays = await LoadOverlaysAsync(workspaceId, cancellationToken);
         var visibleItems = items
             .Where(item => CanViewExecution(
                 membership.Role,
                 userId,
-                item))
+                item,
+                overlays.GetValueOrDefault(item.ToolName)))
             .ToArray();
 
         var views = new List<ToolExecutionView>(visibleItems.Length);
@@ -221,7 +264,8 @@ public sealed class ToolExecutionService(
             !CanViewExecution(
                 membership.Role,
                 userId,
-                execution))
+                execution,
+                await policies.FindAsync(workspaceId, execution.ToolName, cancellationToken)))
             return new(null, "execution_not_found");
 
         return new(
@@ -255,13 +299,20 @@ public sealed class ToolExecutionService(
         if (tool is null)
             return new(null, "tool_not_found");
 
-        if (!tool.Definition.RequiresApproval)
+        if (!execution.PolicyRequiresApproval)
             return new(null, "approval_not_required");
 
-        var minimumApproverRole =
-            tool.Definition.MinimumApproverRole ?? WorkspaceRole.Admin;
+        // D5: re-read the current policy and apply the stricter of the
+        // admission snapshot and the current policy. Loosening never helps a
+        // pending execution; tightening always applies.
+        var overlay = await policies.FindAsync(
+            workspaceId,
+            execution.ToolName,
+            cancellationToken);
+        var policy = execution.PolicySnapshot.StricterOf(
+            ToolPolicyEvaluator.Effective(tool.Definition, overlay));
 
-        if (membership.Role < minimumApproverRole)
+        if (membership.Role < (policy.MinimumApproverRole ?? WorkspaceRole.Admin))
             return new(null, "forbidden");
 
         if (execution.RequestedByUserId == approverUserId)
@@ -270,19 +321,32 @@ public sealed class ToolExecutionService(
         if (execution.Status != ToolExecutionStatus.PendingApproval)
             return new(null, "invalid_state");
 
+        if (!policy.Enabled)
+            return new(null, "tool_disabled");
+
         // The handler runs with the requester's identity (for example the
         // audit note's CreatedByUserId). Authority is re-resolved from the
         // database at approval time: a requester who has since been removed
-        // from the workspace or demoted below the tool's requester role must
-        // not have the tool executed on their behalf.
+        // from the workspace or demoted below the (stricter) requester role
+        // must not have the tool executed on their behalf.
         var requesterMembership = await workspaces.FindMembershipAsync(
             execution.RequestedByUserId,
             workspaceId,
             cancellationToken);
 
         if (requesterMembership is null ||
-            requesterMembership.Role < tool.Definition.MinimumRequesterRole)
+            requesterMembership.Role < policy.MinimumRequesterRole)
             return new(null, "requester_no_longer_authorized");
+
+        using (var storedArguments = JsonDocument.Parse(execution.ArgumentsJson))
+        {
+            var limitErrors = ToolPolicyEvaluator.CheckArgumentLimits(
+                tool.Definition,
+                policy,
+                storedArguments.RootElement);
+            if (limitErrors.Count > 0)
+                return new(null, "policy_limit_exceeded", limitErrors);
+        }
 
         var now = clock.GetUtcNow();
         execution.Approve(approverUserId, now);
@@ -294,11 +358,22 @@ public sealed class ToolExecutionService(
                 now),
             cancellationToken);
 
+        // D6: commit the approval only if the policy version evaluated above is
+        // still current (a concurrent Owner change fails this commit closed).
+        await policies.GuardUnchangedAsync(
+            overlay,
+            workspaceId,
+            execution.ToolName,
+            now,
+            cancellationToken);
+
         // Guarded PendingApproval -> Ready transition. If a concurrent
         // approve/reject already moved the row, nothing is committed and the
         // handler is not run a second time.
-        if (await executions.SaveChangesAsync(cancellationToken) !=
-            ToolPersistenceOutcome.Saved)
+        var approved = await executions.SaveChangesAsync(cancellationToken);
+        if (approved == ToolPersistenceOutcome.PolicyConflict)
+            return new(null, "policy_changed");
+        if (approved != ToolPersistenceOutcome.Saved)
             return new(null, "invalid_state");
 
         return await ExecuteReadyAsync(
@@ -333,13 +408,17 @@ public sealed class ToolExecutionService(
         if (tool is null)
             return new(null, "tool_not_found");
 
-        if (!tool.Definition.RequiresApproval)
+        if (!execution.PolicyRequiresApproval)
             return new(null, "approval_not_required");
 
-        var minimumApproverRole =
-            tool.Definition.MinimumApproverRole ?? WorkspaceRole.Admin;
+        // D8: rejecting needs the stricter approver role but stays possible
+        // for a disabled tool, so stale pending executions can be cleaned up.
+        var policy = execution.PolicySnapshot.StricterOf(
+            ToolPolicyEvaluator.Effective(
+                tool.Definition,
+                await policies.FindAsync(workspaceId, execution.ToolName, cancellationToken)));
 
-        if (membership.Role < minimumApproverRole)
+        if (membership.Role < (policy.MinimumApproverRole ?? WorkspaceRole.Admin))
             return new(null, "forbidden");
 
         if (execution.RequestedByUserId == approverUserId)
@@ -556,31 +635,57 @@ public sealed class ToolExecutionService(
             events.Select(x => new ToolAuditEventView(
                 x.EventType,
                 x.ActorUserId,
-                x.OccurredAtUtc)).ToArray());
+                x.OccurredAtUtc)).ToArray(),
+            execution.PolicyVersion);
     }
 
+    // D9: non-requesters need max(snapshot requester role, current effective
+    // requester role) to see an execution.
     private bool CanViewExecution(
         WorkspaceRole callerRole,
         Guid callerUserId,
-        ToolExecution execution)
+        ToolExecution execution,
+        ToolPolicy? overlay)
     {
         if (execution.RequestedByUserId == callerUserId)
             return true;
 
         var tool = registry.Find(execution.ToolName);
-        return tool is not null &&
-               callerRole >= tool.Definition.MinimumRequesterRole;
+        if (tool is null)
+            return false;
+
+        var required = execution.PolicySnapshot
+            .StricterOf(ToolPolicyEvaluator.Effective(tool.Definition, overlay))
+            .MinimumRequesterRole;
+
+        return callerRole >= required;
     }
 
-    private static ToolDefinitionView Map(ToolDefinition definition) =>
+    private async Task<Dictionary<string, ToolPolicy>> LoadOverlaysAsync(
+        Guid workspaceId,
+        CancellationToken cancellationToken) =>
+        (await policies.ListAsync(workspaceId, cancellationToken))
+            .ToDictionary(x => x.ToolName, StringComparer.Ordinal);
+
+    private static ToolDefinitionView Map(
+        ToolDefinition definition,
+        EffectiveToolPolicy policy) =>
         new(
             definition.Name,
             definition.Description,
             definition.RiskLevel,
-            definition.MinimumRequesterRole,
-            definition.RequiresApproval,
-            definition.MinimumApproverRole,
-            definition.Arguments);
+            policy.MinimumRequesterRole,
+            policy.RequiresApproval,
+            policy.MinimumApproverRole,
+            definition.Arguments
+                .Select(argument =>
+                    argument.Type == ToolArgumentType.String &&
+                    policy.MaxArgumentLength is { } limit &&
+                    (argument.MaxLength is null || limit < argument.MaxLength)
+                        ? argument with { MaxLength = limit }
+                        : argument)
+                .ToArray(),
+            policy.Version);
 
     private static ToolExecutionAuditEvent Audit(
         ToolExecution execution,

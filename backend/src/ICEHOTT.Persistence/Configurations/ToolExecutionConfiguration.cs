@@ -11,8 +11,24 @@ public sealed class ToolExecutionConfiguration
 {
     public void Configure(EntityTypeBuilder<ToolExecution> builder)
     {
-        builder.ToTable("tool_executions");
+        builder.ToTable("tool_executions", table =>
+        {
+            table.HasCheckConstraint(
+                "CK_tool_executions_PolicyVersion", "\"PolicyVersion\" >= 0");
+            table.HasCheckConstraint(
+                "CK_tool_executions_PolicyMinimumRequesterRole",
+                "\"PolicyMinimumRequesterRole\" BETWEEN 1 AND 3");
+            table.HasCheckConstraint(
+                "CK_tool_executions_PolicyApprover",
+                "(\"PolicyRequiresApproval\" AND \"PolicyMinimumApproverRole\" IS NOT NULL AND \"PolicyMinimumApproverRole\" BETWEEN 2 AND 3) OR " +
+                "(NOT \"PolicyRequiresApproval\" AND \"PolicyMinimumApproverRole\" IS NULL)");
+        });
         builder.HasKey(x => x.Id);
+
+        // Phase 4.5 B: effective policy snapshot at admission.
+        builder.Property(x => x.PolicyMinimumRequesterRole).HasConversion<int>();
+        builder.Property(x => x.PolicyMinimumApproverRole).HasConversion<int?>();
+        builder.Ignore(x => x.PolicySnapshot);
         builder.HasAlternateKey(x => new { x.Id, x.WorkspaceId });
 
         builder.Property(x => x.ToolName)

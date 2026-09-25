@@ -246,7 +246,10 @@ Additional security regressions now cover:
 
 Phase 4.5 hardens this foundation with:
 
-- configurable per-tool policy administration;
+- configurable per-tool policy administration — implemented by Phase 4.5 packet B
+  (`docs/PHASE-4.5-B-TOOL-POLICY.md`): a per-workspace overlay can only tighten the
+  built-in definitions above, and approval re-checks the stricter of the admission
+  snapshot and the current policy;
 - stronger secret redaction/classification;
 - recovery of executions left in `Running` if the process dies between the Ready → Running claim and completion (no lease/timeout yet; such rows never re-run, which is safe, but they need operator visibility);
 - rate and cost budgets;

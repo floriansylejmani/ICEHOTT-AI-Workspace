@@ -72,6 +72,7 @@ builder.Services.AddScoped<IConversationRepository, ConversationRepository>();
 builder.Services.AddScoped<IKnowledgeRepository, KnowledgeRepository>();
 builder.Services.AddScoped<IKnowledgeJobQueue, KnowledgeJobQueue>();
 builder.Services.AddScoped<IToolExecutionRepository, ToolExecutionRepository>();
+builder.Services.AddScoped<IToolPolicyRepository, ToolPolicyRepository>();
 builder.Services.AddScoped<IWorkspaceAuditNoteRepository, WorkspaceAuditNoteRepository>();
 builder.Services.AddScoped<IVectorStore, PostgresVectorStore>();
 builder.Services.AddScoped<IUnitOfWork>(sp => sp.GetRequiredService<ICEHOTTDbContext>());
@@ -127,6 +128,7 @@ builder.Services.AddScoped<IWorkspaceTool, WorkspaceEchoTool>();
 builder.Services.AddScoped<IWorkspaceTool, WorkspaceAuditNoteCreateTool>();
 builder.Services.AddScoped<IToolRegistry, ToolRegistry>();
 builder.Services.AddScoped<ToolExecutionService>();
+builder.Services.AddScoped<ToolPolicyService>();
 
 var promotionRequirements = RagPromotionRequirements.ProviderBenchmarkDefault with
 {
