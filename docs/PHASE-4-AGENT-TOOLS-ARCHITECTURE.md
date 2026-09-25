@@ -228,6 +228,7 @@ Local release-gate evidence:
 - idempotent migration script generation passed;
 - Docker images `icehott-api` and `icehott-ai` built successfully;
 - live API + PostgreSQL smoke for `workspace.echo`: Succeeded with Requested/Started/Succeeded audit events;
+- live PostgreSQL concurrency smoke for a sensitive write: two simultaneous approvals produced HTTP 200 + 409, exactly one workspace audit note, and exactly one Approved/Started/Succeeded audit-event sequence;
 - staged secret scan: CLEAN; hardened-branch GitHub CI: backend/frontend/AI all passed, including PostgreSQL migration application and benchmark dry-run.
 
 Additional security regressions now cover:
