@@ -6,6 +6,7 @@ on:
       - main
       - "feature/**"
       - "fix/**"
+      - "phase-*"
   pull_request:
 
 permissions:
@@ -17,6 +18,7 @@ jobs:
     env:
       ASPNETCORE_ENVIRONMENT: Development
       ConnectionStrings__DefaultConnection: Host=localhost;Port=5432;Database=icehott_ci;Username=postgres;Password=postgres
+      ICEHOTT_POSTGRES_TEST_CONNECTION: Host=localhost;Port=5432;Database=icehott_ci;Username=postgres;Password=postgres
       Jwt__Key: ICEHOTT-ci-only-key-with-at-least-32-characters-2026
       Cors__AllowedOrigins__0: http://localhost:3000
     services:

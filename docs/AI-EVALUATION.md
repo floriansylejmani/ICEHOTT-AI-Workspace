@@ -25,6 +25,20 @@ ICEHOTT will treat evaluation as a product feature, not an afterthought.
 
 These checks validate RAG mechanics and failure handling. They do not establish production semantic quality; groundedness, recall, precision, citation correctness, and provider promotion still require a versioned evaluation dataset.
 
+## Phase 3.6A / 3.6B provider evaluation
+- Embedding profiles bind provider/model/dimensions/index version.
+- Deterministic evidence records dataset version, HitRate@K, Mean Recall@K, Mean Precision@K, citation correctness, and tenant leakage.
+- Benchmark cases can declare tenant-forbidden sources; tenant leakage is measured from returned sources rather than assumed to be zero.
+- Dataset thresholds are evaluated explicitly and exposed as a benchmark pass/fail result.
+- Promotion rejects evidence for a different profile, index version, or dataset version.
+- Production promotion can require separate offline semantic evidence for groundedness, answer relevance, faithfulness, context precision, and context recall.
+- Benchmark evidence is persisted even when thresholds fail so failed runs remain auditable.
+- Provider usage/cost estimates use measured token counts when the provider returns them.
+- A benchmark runner never activates a candidate automatically.
+- Live provider benchmarks are opt-in and are not part of deterministic CI.
+
+Phase 3.6B Foundation validates provider contracts and blue/green promotion mechanics with mocks and real PostgreSQL/pgvector. It does not claim semantic superiority for OpenAI, Voyage, Cohere, or any other provider without a live benchmark.
+
 ## Agent metrics
 - Task completion rate
 - Tool-call success rate

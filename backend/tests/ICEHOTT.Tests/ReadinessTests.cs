@@ -24,6 +24,7 @@ public sealed class ReadinessTests : IClassFixture<IcehottApiFactory>
 
         Assert.Equal("ready", json.RootElement.GetProperty("status").GetString());
         Assert.True(json.RootElement.GetProperty("embeddingProfileReady").GetBoolean());
+        Assert.True(json.RootElement.GetProperty("embeddingProviderReady").GetBoolean());
         Assert.Equal(
             EmbeddingProfileDefaults.LocalDeterministic64.Key,
             json.RootElement.GetProperty("embeddingProfile").GetString());

@@ -71,6 +71,28 @@
 - Backend-derived citations remain independent of model-generated source labels.
 - This deterministic filter is defense in depth and does not replace trusted prompt boundaries or server-side tool authorization.
 
+## Phase 3.6B implemented controls
+
+### Semantic provider isolation
+- Retrieval resolves only the Active embedding profile; Building/Retired/Failed profiles cannot serve normal RAG requests.
+- Building-profile generation reuses stable chunk IDs and never runs the serving document ReplaceChunks path.
+- External embedding-provider batches are grouped by WorkspaceId so content from different tenants is never mixed in one provider request.
+- Vector storage and retrieval remain workspace-filtered and profile-filtered.
+
+### Provider configuration and secrets
+- Production-provider API keys remain server-side configuration only.
+- OpenAI credentials are mapped from `OPENAI_API_KEY` to the API container and are never exposed to the browser.
+- Readiness verifies that the Active provider is configured for the exact profile without making a paid live embedding call.
+- Missing provider credentials make the API not-ready instead of silently falling back to an incompatible vector space.
+
+### Promotion and activation
+- Candidate providers remain Building until evaluation evidence passes.
+- Promotion evidence is bound to dataset/profile/provider/model/dimensions/index version.
+- Tenant leakage must be zero.
+- Production promotion requires offline semantic evidence when configured.
+- PostgreSQL activation uses SERIALIZABLE isolation, table locks, final coverage/index/evidence checks, and an atomic Active/Retired state swap.
+- Retired vectors and indexes are not automatically deleted during activation, preserving rollback options.
+
 ## Required controls for later phases
 
 - Malware scanning and deeper file-signature inspection for production uploads

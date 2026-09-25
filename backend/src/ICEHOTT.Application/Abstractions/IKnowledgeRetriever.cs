@@ -3,7 +3,9 @@ namespace ICEHOTT.Application.Abstractions;
 public sealed record KnowledgeRetrievalResult(
     IReadOnlyList<KnowledgeMatch> Matches,
     int CandidateCount,
-    int FilteredCount);
+    int FilteredCount,
+    EmbeddingUsage? Usage = null,
+    double? EmbeddingLatencyMs = null);
 
 public interface IKnowledgeRetriever
 {

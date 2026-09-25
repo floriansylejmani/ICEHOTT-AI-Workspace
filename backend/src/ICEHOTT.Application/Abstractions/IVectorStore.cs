@@ -28,6 +28,7 @@ public interface IVectorStore
         string queryText,
         IReadOnlyList<float> queryEmbedding,
         int limit,
+        bool allowBuildingProfile = false,
         CancellationToken cancellationToken = default);
 }
 

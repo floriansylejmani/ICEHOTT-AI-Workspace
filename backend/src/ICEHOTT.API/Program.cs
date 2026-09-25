@@ -31,6 +31,12 @@ var aiRuntime = builder.Configuration.GetSection(AiRuntimeOptions.SectionName).G
 if (!Uri.TryCreate(aiRuntime.BaseUrl, UriKind.Absolute, out var aiRuntimeUri))
     throw new InvalidOperationException("AiRuntime:BaseUrl must be an absolute URI.");
 
+var openAiEmbedding = builder.Configuration
+    .GetSection(OpenAiEmbeddingOptions.SectionName)
+    .Get<OpenAiEmbeddingOptions>() ?? new OpenAiEmbeddingOptions();
+if (!Uri.TryCreate(openAiEmbedding.BaseUrl, UriKind.Absolute, out var openAiEmbeddingUri))
+    throw new InvalidOperationException("OpenAiEmbedding:BaseUrl must be an absolute URI.");
+
 var allowedOrigins = builder.Configuration.GetSection("Cors:AllowedOrigins").Get<string[]>() ?? [];
 if (!builder.Environment.IsDevelopment() && allowedOrigins.Length == 0)
     throw new InvalidOperationException("Cors:AllowedOrigins must be configured outside Development.");
@@ -47,6 +53,8 @@ builder.Services.AddHealthChecks();
 builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.Configure<JwtOptions>(builder.Configuration.GetSection(JwtOptions.SectionName));
 builder.Services.Configure<AiRuntimeOptions>(builder.Configuration.GetSection(AiRuntimeOptions.SectionName));
+builder.Services.Configure<OpenAiEmbeddingOptions>(
+    builder.Configuration.GetSection(OpenAiEmbeddingOptions.SectionName));
 builder.Services.Configure<KnowledgeWorkerOptions>(
     builder.Configuration.GetSection(KnowledgeWorkerOptions.SectionName));
 
@@ -60,6 +68,15 @@ builder.Services.AddScoped<IKnowledgeJobQueue, KnowledgeJobQueue>();
 builder.Services.AddScoped<IVectorStore, PostgresVectorStore>();
 builder.Services.AddScoped<IUnitOfWork>(sp => sp.GetRequiredService<ICEHOTTDbContext>());
 
+// B1: Profile repository and resolvers
+builder.Services.AddScoped<IEmbeddingProfileRepository, EmbeddingProfileRepository>();
+builder.Services.AddScoped<IServingEmbeddingProfileResolver, ServingEmbeddingProfileResolver>();
+builder.Services.AddScoped<IBuildEmbeddingProfileResolver, BuildEmbeddingProfileResolver>();
+builder.Services.AddScoped<IVectorIndexProvisioner, PostgresVectorIndexProvisioner>();
+builder.Services.AddScoped<IEmbeddingBuildStore, PostgresEmbeddingBuildStore>();
+builder.Services.AddScoped<IRagEvaluationEvidenceRepository, RagEvaluationEvidenceRepository>();
+builder.Services.AddScoped<IEmbeddingProfileActivationStore, PostgresEmbeddingProfileActivationStore>();
+
 builder.Services.AddSingleton<IPasswordService, PasswordService>();
 builder.Services.AddSingleton<ITokenService, TokenService>();
 builder.Services.AddSingleton<IDocumentTextExtractor, DocumentTextExtractor>();
@@ -72,7 +89,21 @@ builder.Services.AddHttpClient<IAiRuntimeClient, AiRuntimeClient>(client =>
     client.BaseAddress = new Uri(aiRuntimeUri.ToString().TrimEnd('/') + "/");
     client.Timeout = TimeSpan.FromSeconds(Math.Clamp(aiRuntime.TimeoutSeconds, 5, 120));
 });
+
+builder.Services.AddHttpClient<OpenAiEmbeddingProvider>(client =>
+{
+    client.BaseAddress = new Uri(openAiEmbeddingUri.ToString().TrimEnd('/') + "/");
+    client.Timeout = TimeSpan.FromSeconds(
+        Math.Clamp(openAiEmbedding.TimeoutSeconds, 5, 120));
+});
+
+// B2/B5: provider registry discovers all explicitly registered provider adapters.
 builder.Services.AddScoped<IEmbeddingProvider, AiRuntimeEmbeddingProvider>();
+builder.Services.AddScoped<IEmbeddingProvider>(
+    sp => sp.GetRequiredService<OpenAiEmbeddingProvider>());
+builder.Services.AddScoped<IEmbeddingProviderRegistry, EmbeddingProviderRegistry>();
+
+builder.Services.AddScoped<IProfileKnowledgeRetriever, ProfileKnowledgeRetriever>();
 builder.Services.AddScoped<IKnowledgeRetriever, KnowledgeRetriever>();
 
 builder.Services.AddScoped<AuthService>();
@@ -80,6 +111,18 @@ builder.Services.AddScoped<WorkspaceService>();
 builder.Services.AddScoped<AgentService>();
 builder.Services.AddScoped<KnowledgeService>();
 builder.Services.AddScoped<KnowledgeIndexingProcessor>();
+builder.Services.AddScoped<EmbeddingProfileManagementService>();
+builder.Services.AddScoped<EmbeddingProfileBuildService>();
+builder.Services.AddScoped<EmbeddingProfileActivationService>();
+builder.Services.AddScoped<RagBenchmarkRunner>();
+
+var promotionRequirements = RagPromotionRequirements.FoundationDefault with
+{
+    RequireOfflineSemanticEvidence = builder.Configuration.GetValue<bool>(
+        "RagPromotion:RequireOfflineSemanticEvidence")
+};
+builder.Services.AddSingleton(promotionRequirements);
+builder.Services.AddSingleton<RagPromotionPolicy>();
 
 if (knowledgeWorker.Enabled)
     builder.Services.AddHostedService<KnowledgeIngestionWorker>();
@@ -140,27 +183,56 @@ app.MapHealthChecks("/health");
 app.MapGet("/ready", async (
     ICEHOTTDbContext db,
     IAiRuntimeClient aiRuntimeClient,
-    IEmbeddingProvider embeddingProvider,
+    IServingEmbeddingProfileResolver servingProfileResolver,
+    IEmbeddingProviderRegistry providerRegistry,
     IVectorStore vectorStore,
     CancellationToken cancellationToken) =>
 {
     var databaseReady = await db.Database.CanConnectAsync(cancellationToken);
     var aiReady = await aiRuntimeClient.IsReadyAsync(cancellationToken);
-    var embeddingProfileReady =
-        databaseReady &&
-        await vectorStore.IsProfileReadyAsync(
-            embeddingProvider.Profile,
-            cancellationToken);
 
-    return databaseReady && aiReady && embeddingProfileReady
+    EmbeddingProfileDescriptor? activeProfile = null;
+    var embeddingProfileReady = false;
+    var embeddingProviderReady = false;
+
+    if (databaseReady)
+    {
+        try
+        {
+            activeProfile = await servingProfileResolver.ResolveAsync(cancellationToken);
+            embeddingProfileReady = await vectorStore.IsProfileReadyAsync(
+                activeProfile, cancellationToken);
+
+            var provider = providerRegistry.Resolve(activeProfile.Provider);
+            embeddingProviderReady =
+                provider is IEmbeddingProviderConfigurationProbe probe &&
+                probe.IsConfigured(activeProfile);
+        }
+        catch (InvalidOperationException)
+        {
+            // No Active profile exists; readiness flags stay false.
+        }
+        catch (EmbeddingProviderException)
+        {
+            // Provider is unavailable or not registered.
+        }
+    }
+
+    var profileKey = activeProfile?.Key ?? "none";
+
+    return databaseReady &&
+           aiReady &&
+           embeddingProfileReady &&
+           embeddingProviderReady
         ? Results.Ok(new
         {
             status = "ready",
             service = "icehott-api",
             database = "ready",
             aiRuntime = "ready",
-            embeddingProfile = embeddingProvider.Profile.Key,
-            embeddingProfileReady = true
+            embeddingProfile = profileKey,
+            embeddingProfileReady = true,
+            embeddingProviderReady = true
         })
         : Results.Json(
             new
@@ -169,8 +241,9 @@ app.MapGet("/ready", async (
                 service = "icehott-api",
                 database = databaseReady ? "ready" : "unavailable",
                 aiRuntime = aiReady ? "ready" : "unavailable",
-                embeddingProfile = embeddingProvider.Profile.Key,
-                embeddingProfileReady
+                embeddingProfile = profileKey,
+                embeddingProfileReady,
+                embeddingProviderReady
             },
             statusCode: StatusCodes.Status503ServiceUnavailable);
 });
