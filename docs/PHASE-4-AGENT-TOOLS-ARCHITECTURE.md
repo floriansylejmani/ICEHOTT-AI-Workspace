@@ -71,10 +71,13 @@ Approval invariants:
 
 - approver must belong to the same workspace;
 - approver must satisfy the tool's approval role;
-- requester cannot approve their own sensitive execution;
-- requester membership and minimum requester role are revalidated at approval time;
+- requester cannot approve their own sensitive execution (`403 self_approval_forbidden`); the requester cannot reject it either, so the decision always belongs to a different Admin/Owner;
+- at approval time the requester's membership is re-resolved from the database: if the requester has been removed from the workspace or demoted below the tool's minimum requester role, approval returns `409 requester_no_longer_authorized`, nothing changes, and the execution can still be rejected;
 - rejected executions cannot later be approved;
+- an approval is bound to one execution ID inside one workspace and is consumed by the guarded PendingApproval → Ready transition; it cannot be reused or replayed;
 - approval never comes from model output.
+
+Approval executes the tool in the same request (`Ready → Running → Succeeded/Failed`); there is no separate `/execute` endpoint.
 
 ## Tenant and permission model
 
@@ -115,8 +118,13 @@ Tool arguments are JSON objects validated server-side by the registered tool.
 Rules:
 
 - unknown tool names are rejected;
+- unknown argument properties are rejected (property names are case-sensitive), so `workspaceId`, `userId`, `requestedByUserId`, `approved` etc. can never be smuggled in as arguments;
+- duplicate property names anywhere in the arguments object are rejected (JSON lookups resolve to the last duplicate while persistence stores all of them, so an earlier duplicate would otherwise be stored unvalidated);
 - missing required fields are rejected;
 - wrong JSON types are rejected;
+- length limits apply to the raw string value, not the trimmed value (padding cannot bypass the bound);
+- control characters other than tab/CR/LF are rejected (PostgreSQL rejects NUL in text columns);
+- the canonical arguments JSON is capped at 16 KiB as a backstop for future tools;
 - length/range limits are enforced before persistence/execution;
 - tool code receives only arguments that passed its schema;
 - raw model output is never executed as code, SQL, shell, or URLs.
@@ -135,9 +143,15 @@ Behavior:
 
 - same key + same canonical argument hash returns the original execution;
 - same key + different arguments returns `idempotency_conflict`;
-- a terminal execution is never replayed by retrying the same key.
+- a terminal execution is never replayed by retrying the same key;
+- the key is scoped to (workspace, tool), not to the requester: another member of the same workspace sending the same key and arguments receives the existing execution rather than creating a second side effect.
 
-Concurrent-race hardening beyond the database uniqueness constraint is part of Phase 4.5 replay hardening.
+Concurrency:
+
+- **Insert race.** Two concurrent requests with the same key both pass the pre-insert lookup; the unique index rejects the second insert. The loser discards its staged row and returns the winner's execution (or `idempotency_conflict` if its arguments differ). It never runs the handler.
+- **Transition race.** `tool_executions.Status` is an EF optimistic concurrency token, so every transition is a compare-and-swap (`UPDATE ... WHERE "Status" = <status read>`). Two approvers (or approve vs. reject) racing on the same PendingApproval execution: exactly one wins, the other gets `409 invalid_state` with nothing committed, and the handler runs at most once. This needs no schema change.
+
+Deeper replay protection (e.g. request signing, key expiry) remains Phase 4.5.
 
 ## Persistence and audit
 
@@ -162,6 +176,12 @@ Concurrent-race hardening beyond the database uniqueness constraint is part of P
 - Failed
 
 `workspace_audit_notes` proves a tenant-scoped write action and is linked to its originating execution.
+
+Failure isolation:
+
+- handler side effects, the `Succeeded` status and the `Succeeded` audit event commit in a single `SaveChanges`;
+- if a handler throws, every change it staged is discarded before `Failed` is recorded, so a Failed execution has no side effects;
+- only the fixed code `tool_execution_failed` and message `Tool execution failed.` are persisted; exception text (which may contain connection strings or other secrets) is never stored or returned.
 
 No production secret should be accepted as a normal tool argument. Future secret-requiring tools must use server-side secret references.
 
@@ -199,9 +219,9 @@ POST /api/workspaces/{workspaceId}/tool-executions/{executionId}/reject
 
 Local release-gate evidence:
 
-- backend Debug: 127/127 tests passed;
-- backend Release: 127/127 tests passed;
-- Phase 4 targeted tool suite: 14/14 passed;
+- backend Debug: 199/199 tests passed;
+- backend Release: 199/199 tests passed;
+- Phase 4 targeted tool/security suite: 86/86 passed;
 - frontend: 8/8 tests passed, ESLint passed, production build passed;
 - AI runtime: 5/5 pytest passed;
 - EF migrations applied from an empty PostgreSQL/pgvector database through `20260925181737_Phase4AgentToolsExecution`;
@@ -214,9 +234,12 @@ Additional security regressions now cover:
 
 - Member users cannot read Admin-only sensitive execution details;
 - requester permission is revalidated before a sensitive approval can execute;
+- concurrent approve/reject transitions use optimistic concurrency so only one transition can win and a sensitive side effect runs at most once;
+- handler writes staged before an exception are discarded before the execution is persisted as Failed;
+- simultaneous requests with the same idempotency key converge on one execution instead of surfacing a 500 or duplicating side effects;
 - idempotency keys are scoped independently per workspace;
 - approval cannot cross workspace boundaries;
-- unknown tools, wrong types, oversized arguments, unknown properties, and invalid idempotency keys are rejected.
+- duplicate JSON properties, control characters, wrong types, oversized/padded arguments, unknown properties, unknown tools, and invalid idempotency keys are rejected.
 
 ## Deferred to Phase 4.5
 
@@ -224,9 +247,16 @@ Phase 4.5 hardens this foundation with:
 
 - configurable per-tool policy administration;
 - stronger secret redaction/classification;
-- concurrent replay race handling;
+- recovery of executions left in `Running` if the process dies between the Ready → Running claim and completion (no lease/timeout yet; such rows never re-run, which is safe, but they need operator visibility);
 - rate and cost budgets;
 - cancellation and timeout policy;
 - external high-risk tool adapters;
 - prompt-injection-to-tool escalation suites;
 - stronger append-only/immutable audit enforcement at the database boundary.
+
+## Known limitations (Phase 4)
+
+- Tool argument validation is implemented per tool (`IWorkspaceTool.ValidateArguments`); the advertised `ToolArgumentDefinition` list is descriptive and is not enforced generically, so the two can drift for future tools. A registry-level schema validator is a good Phase 4.5 candidate.
+- Execution visibility is permission-aware: a user can always read their own execution, while other workspace members can read it only when their current role is allowed to request that tool. Member-level users therefore cannot read Admin-only sensitive execution arguments/results.
+- There is no dedicated request-body size limit on `POST tool-executions` beyond the server default; oversized arguments are rejected after parsing.
+- The API error code set is: `workspace_not_found`, `tool_not_found`, `execution_not_found` (404); `forbidden`, `self_approval_forbidden` (403); `idempotency_conflict`, `invalid_state`, `requester_no_longer_authorized` (409); `invalid_arguments`, `invalid_idempotency_key`, `approval_not_required` (400); `tool_execution_failed` (500, with the persisted Failed execution in the body).

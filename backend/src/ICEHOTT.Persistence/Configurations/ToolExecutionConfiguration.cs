@@ -34,6 +34,15 @@ public sealed class ToolExecutionConfiguration
         builder.Property(x => x.ErrorMessage)
             .HasMaxLength(500);
 
+        // Every state transition changes Status, so using it as the
+        // optimistic concurrency token turns each UPDATE into a guarded
+        // compare-and-swap (WHERE "Status" = <status that was read>).
+        // Two racing approvers or executors cannot both win the same
+        // transition, so a handler can never run twice for one execution.
+        // No DDL change: this only affects generated UPDATE statements.
+        builder.Property(x => x.Status)
+            .IsConcurrencyToken();
+
         builder.HasIndex(x => new
         {
             x.WorkspaceId,

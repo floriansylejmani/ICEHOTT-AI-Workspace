@@ -31,18 +31,30 @@ internal static class ToolArgumentReader
             errors.Add($"Argument '{propertyName}' must be a string.");
         else
         {
-            var text = value.GetString()?.Trim() ?? string.Empty;
-            if (text.Length == 0)
+            // The length bound applies to the raw value, not the trimmed
+            // one: the raw value is what gets persisted in ArgumentsJson,
+            // so measuring after Trim() let whitespace padding bypass it.
+            var raw = value.GetString() ?? string.Empty;
+            if (raw.Trim().Length == 0)
                 errors.Add($"Argument '{propertyName}' is required.");
-            else if (text.Length > maxLength)
+            else if (raw.Length > maxLength)
                 errors.Add(
                     $"Argument '{propertyName}' must be at most {maxLength} characters.");
+            else if (raw.Any(IsDisallowedControlCharacter))
+                errors.Add(
+                    $"Argument '{propertyName}' contains unsupported control characters.");
         }
 
         return errors.Count == 0
             ? ToolArgumentValidationResult.Valid
             : new ToolArgumentValidationResult(false, errors);
     }
+
+    // NUL is rejected by PostgreSQL text columns (SQLSTATE 22021) and other
+    // C0/C1 controls have no business in tool text. Tab/CR/LF stay allowed.
+    private static bool IsDisallowedControlCharacter(char character) =>
+        char.IsControl(character) &&
+        character is not ('\t' or '\n' or '\r');
 
     public static string RequiredString(
         JsonElement arguments,

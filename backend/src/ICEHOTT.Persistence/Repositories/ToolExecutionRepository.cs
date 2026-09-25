@@ -81,4 +81,77 @@ public sealed class ToolExecutionRepository(ICEHOTTDbContext db)
         db.ToolExecutionAuditEvents
             .AddAsync(auditEvent, cancellationToken)
             .AsTask();
+
+    public async Task<ToolPersistenceOutcome> SaveChangesAsync(
+        CancellationToken cancellationToken = default)
+    {
+        var insertedExecution = db.ChangeTracker
+            .Entries<ToolExecution>()
+            .FirstOrDefault(x => x.State == EntityState.Added)
+            ?.Entity;
+
+        try
+        {
+            await db.SaveChangesAsync(cancellationToken);
+            return ToolPersistenceOutcome.Saved;
+        }
+        catch (DbUpdateConcurrencyException)
+        {
+            // Status is a concurrency token: another request already moved
+            // this execution to a different state. Drop everything staged
+            // by this request so no audit event or side effect leaks out.
+            DetachPendingChanges();
+            return ToolPersistenceOutcome.ConcurrencyConflict;
+        }
+        catch (DbUpdateException) when (insertedExecution is not null)
+        {
+            DetachPendingChanges();
+
+            var winnerExists = await db.ToolExecutions
+                .AsNoTracking()
+                .AnyAsync(
+                    x => x.WorkspaceId == insertedExecution.WorkspaceId &&
+                         x.ToolName == insertedExecution.ToolName &&
+                         x.IdempotencyKey == insertedExecution.IdempotencyKey,
+                    cancellationToken);
+
+            if (winnerExists)
+                return ToolPersistenceOutcome.DuplicateIdempotencyKey;
+
+            throw;
+        }
+    }
+
+    public void DiscardPendingSideEffects(ToolExecution execution)
+    {
+        foreach (var entry in db.ChangeTracker.Entries().ToList())
+        {
+            if (ReferenceEquals(entry.Entity, execution))
+                continue;
+
+            switch (entry.State)
+            {
+                case EntityState.Added:
+                    entry.State = EntityState.Detached;
+                    break;
+                case EntityState.Modified:
+                    entry.CurrentValues.SetValues(entry.OriginalValues);
+                    entry.State = EntityState.Unchanged;
+                    break;
+                case EntityState.Deleted:
+                    entry.State = EntityState.Unchanged;
+                    break;
+            }
+        }
+    }
+
+    private void DetachPendingChanges()
+    {
+        foreach (var entry in db.ChangeTracker.Entries()
+                     .Where(x => x.State is EntityState.Added
+                         or EntityState.Modified
+                         or EntityState.Deleted)
+                     .ToList())
+            entry.State = EntityState.Detached;
+    }
 }
