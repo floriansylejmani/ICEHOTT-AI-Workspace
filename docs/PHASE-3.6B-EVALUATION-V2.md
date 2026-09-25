@@ -1,6 +1,6 @@
 # Phase 3.6B — Expanded Evaluation Dataset v2
 
-Status: deterministic corpus expansion complete; live provider benchmark not yet authorized
+Status: deterministic corpus expansion complete; live benchmark harness implemented; paid provider execution not yet authorized
 Dataset: `evals/rag/v2/dataset.json`
 Version: `rag-v2`
 

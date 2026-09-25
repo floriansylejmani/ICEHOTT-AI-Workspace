@@ -95,7 +95,10 @@ ICEHOTT is a production-oriented AI workspace for agentic work: knowledge, tools
 - Mock-tested OpenAI `text-embedding-3-small` 1536-dimensional adapter
 - Provider-configuration-aware readiness
 - Real PostgreSQL/pgvector activation rollback/swap integration tests
-- Live paid-provider benchmark and activation intentionally gated behind explicit credentials/cost authorization
+- `rag-v2` expanded evaluation corpus with SHA-256 freeze and tenant-isolation fixture
+- Opt-in live provider benchmark CLI with fresh-database, secret, pricing, and cost-cap guards
+- CI benchmark dry-run verifies the frozen corpus without provider cost
+- Live paid-provider benchmark and activation remain gated behind explicit credentials/cost authorization
 
 ## Architecture
 
