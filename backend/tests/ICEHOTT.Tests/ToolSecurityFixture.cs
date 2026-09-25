@@ -15,9 +15,16 @@ namespace ICEHOTT.Tests;
 /// the auth endpoints are rate limited (10/min per client address); every test
 /// creates its own workspaces so tests stay isolated from each other.
 /// </summary>
-public sealed class ToolSecurityFixture : IAsyncLifetime
+public class ToolSecurityFixture : IAsyncLifetime
 {
-    public IcehottApiFactory Factory { get; } = new();
+    public ToolSecurityFixture()
+        : this(new IcehottApiFactory())
+    {
+    }
+
+    protected ToolSecurityFixture(IcehottApiFactory factory) => Factory = factory;
+
+    public IcehottApiFactory Factory { get; }
 
     public ToolTestIdentity Owner { get; private set; } = null!;
     public ToolTestIdentity Admin { get; private set; } = null!;

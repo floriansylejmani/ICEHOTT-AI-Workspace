@@ -28,6 +28,7 @@ public sealed class ICEHOTTDbContext(DbContextOptions<ICEHOTTDbContext> options)
     public DbSet<WorkspaceAuditNote> WorkspaceAuditNotes => Set<WorkspaceAuditNote>();
     public DbSet<ToolPolicy> ToolPolicies => Set<ToolPolicy>();
     public DbSet<ToolPolicyAuditEvent> ToolPolicyAuditEvents => Set<ToolPolicyAuditEvent>();
+    public DbSet<ToolQuotaCounter> ToolQuotaCounters => Set<ToolQuotaCounter>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {

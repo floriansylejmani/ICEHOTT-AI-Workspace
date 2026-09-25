@@ -12,7 +12,9 @@ public sealed class ToolExecutionService(
     IToolExecutionRepository executions,
     IToolPolicyRepository policies,
     IToolRegistry registry,
-    TimeProvider clock)
+    TimeProvider clock,
+    ToolQuotaOptions quotas,
+    IToolOperationalLog operationalLog)
 {
     /// <summary>
     /// Upper bound on the canonical JSON persisted per execution. Per-tool

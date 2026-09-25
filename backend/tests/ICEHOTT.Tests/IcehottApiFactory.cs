@@ -22,9 +22,19 @@ namespace ICEHOTT.Tests;
 public sealed class IcehottApiFactory : WebApplicationFactory<Program>
 {
     private readonly SqliteConnection _connection = new("Data Source=:memory:");
+    private readonly Action<IWebHostBuilder>? _configure;
 
     public IcehottApiFactory()
+        : this(null)
     {
+    }
+
+    /// <param name="configure">
+    /// Extra host configuration applied after the defaults (settings, test tools).
+    /// </param>
+    internal IcehottApiFactory(Action<IWebHostBuilder>? configure)
+    {
+        _configure = configure;
         _connection.Open();
         using var scope = Services.CreateScope();
         scope.ServiceProvider.GetRequiredService<ICEHOTTDbContext>().Database.EnsureCreated();
@@ -58,6 +68,7 @@ public sealed class IcehottApiFactory : WebApplicationFactory<Program>
             // IBuildEmbeddingProfileResolver are registered by Program.cs and will use
             // the SQLite ICEHOTTDbContext replaced above — no override needed.
         });
+        _configure?.Invoke(builder);
     }
 
     public async Task<bool> ProcessNextKnowledgeJobAsync()
