@@ -1,6 +1,6 @@
 # Phase 4 — Agent Tools & Execution Architecture
 
-Status: implementation complete locally; final GitHub merge gate pending
+Status: implementation complete; release gate passed
 Base: `main@706fb0a`
 Branch: `phase-4-agent-tools-execution`
 
@@ -208,7 +208,7 @@ Local release-gate evidence:
 - idempotent migration script generation passed;
 - Docker images `icehott-api` and `icehott-ai` built successfully;
 - live API + PostgreSQL smoke for `workspace.echo`: Succeeded with Requested/Started/Succeeded audit events;
-- staged secret scan and GitHub CI are required again for the final commit before merge.
+- staged secret scan: CLEAN; hardened-branch GitHub CI: backend/frontend/AI all passed, including PostgreSQL migration application and benchmark dry-run.
 
 Additional security regressions now cover:
 
