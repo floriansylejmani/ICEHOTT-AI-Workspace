@@ -93,16 +93,43 @@
 - PostgreSQL activation uses SERIALIZABLE isolation, table locks, final coverage/index/evidence checks, and an atomic Active/Retired state swap.
 - Retired vectors and indexes are not automatically deleted during activation, preserving rollback options.
 
+## Phase 4 implemented controls
+
+### Tool trust boundary
+- Tool execution authority remains in ASP.NET Core; AI/model output cannot directly invoke handlers.
+- Every tool request is resolved through a server-owned registry with typed argument validation.
+- Unknown arguments and wrong JSON types are rejected before persistence/execution.
+- Tool definitions declare stable risk level, minimum requester role, approval requirement, and minimum approver role.
+
+### Workspace authorization and approvals
+- Every tool list/request/read/approve/reject path resolves membership in the addressed workspace.
+- Non-members receive the same workspace-not-found behavior used elsewhere.
+- Read-only tools may execute only after membership, role, schema, and idempotency checks.
+- Sensitive writes persist as `PendingApproval`.
+- Sensitive writes require an authorized Admin/Owner approver who is different from the requester.
+- Self-approval and under-privileged approval are rejected server-side.
+- Requester membership and minimum requester role are revalidated at approval time so a revoked or demoted request cannot later execute.
+- Tool execution reads are permission-filtered; callers cannot inspect arguments/results for tools above their current workspace role unless they are the original requester.
+
+### Replay and audit baseline
+- Tool requests require an idempotency key.
+- The database enforces uniqueness across `WorkspaceId + ToolName + IdempotencyKey`.
+- Canonical JSON arguments are SHA-256 hashed so the same key cannot silently authorize different arguments.
+- Execution state, timestamps, approver, bounded failure metadata, and result JSON are persisted.
+- Requested/Approved/Rejected/Started/Succeeded/Failed audit events are persisted.
+- Audit events and workspace audit notes use composite execution/workspace foreign keys so tenant ownership cannot be crossed in persistence.
+
 ## Required controls for later phases
 
 - Malware scanning and deeper file-signature inspection for production uploads
 - Stronger prompt-injection classifiers / model-aware defenses for adversarial corpora
-- Tool allowlists and per-tool permissions
-- Secret storage through deployment platforms
-- Structured audit logs for agent/tool execution
+- Admin-configurable per-tool policies beyond the frozen built-in registry
+- Secret storage through deployment platforms and secret-reference-only tool arguments
+- Database-enforced append-only audit immutability and retention policy
 - Security headers and HTTPS at deployment edge
-- Human approval for email sending, destructive writes, and production mutations
+- External high-risk tool adapters such as email sending, destructive writes, and production mutations
 - Model/prompt/tool version traceability
+- Per-tool rate/cost budgets, cancellation deadlines, and concurrent replay hardening
 
 ## AI-specific rules
 

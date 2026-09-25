@@ -103,6 +103,21 @@ ICEHOTT is a production-oriented AI workspace for agentic work: knowledge, tools
 - Measured full-gate provider cost $0.00100536 under the approved $0.05 cap
 - Candidate activation remains a separate reviewed operation and is never performed automatically by benchmark code
 
+### Phase 4 — Agent Tools & Execution
+- Server-authoritative workspace tool registry with typed argument schemas
+- Workspace role checks before every tool request, read, approval, rejection, or execution
+- `ReadOnly` and `SensitiveWrite` risk classes
+- Sensitive writes persist as `PendingApproval` and require a different Admin/Owner approver
+- Requester permission is revalidated at approval time so revoked/demoted requests cannot execute
+- Execution reads are role-filtered so Member users cannot inspect Admin-only tool arguments/results
+- Canonical JSON argument hashing plus workspace/tool-scoped idempotency keys
+- Persisted execution state machine and result JSON
+- Append-only application audit events for Requested/Approved/Rejected/Started/Succeeded/Failed transitions
+- Composite workspace/execution foreign keys protecting tenant-owned audit data
+- Built-in `workspace.echo` safe tool and approval-gated `workspace.audit-note.create` write tool
+- Phase 4 EF migration validated from zero on PostgreSQL/pgvector
+- Tenant crossing, self-approval, under-privileged approval, invalid-schema, and idempotency tests
+
 ## Architecture
 
 ```text
@@ -123,7 +138,7 @@ Python AI service
 Model / tool runtime
 ```
 
-The AI runtime is intentionally separate from identity and core product authorization. Tool execution and model-provider integrations are added in later phases.
+The AI runtime is intentionally separate from identity and core product authorization. Phase 4 tool execution remains server-authoritative in ASP.NET Core: model output can never bypass workspace membership, schema validation, idempotency, or human approval.
 
 ## Local services
 
@@ -176,4 +191,4 @@ The merge gate requires:
 - EF migration script validation
 - migration application to pgvector/PostgreSQL in GitHub Actions
 
-See [Phase 1](docs/PHASE-1-IDENTITY-WORKSPACES.md), [Phase 2](docs/PHASE-2-AGENT-RUNTIME.md), [Phase 3](docs/PHASE-3-KNOWLEDGE-RAG.md), [Phase 3.5](docs/PHASE-3.5-PRODUCTION-RAG-HARDENING.md), [Phase 3.6 architecture freeze](docs/PHASE-3.6-ARCHITECTURE-FREEZE.md), [Phase 3.6A semantic foundation](docs/PHASE-3.6A-SEMANTIC-FOUNDATION.md), [Phase 3.6B provider research](docs/PHASE-3.6B-PROVIDER-RESEARCH.md), [Phase 3.6B provider architecture](docs/PHASE-3.6B-ARCHITECTURE.md), [Phase 3.6B provider foundation](docs/PHASE-3.6B-PROVIDER-FOUNDATION.md), [Multi-agent engineering roadmap](docs/MULTI-AGENT-ENGINEERING-ROADMAP.md), [API contract](docs/API.md), [Architecture](docs/ARCHITECTURE.md), and [Security](docs/SECURITY.md).
+See [Phase 1](docs/PHASE-1-IDENTITY-WORKSPACES.md), [Phase 2](docs/PHASE-2-AGENT-RUNTIME.md), [Phase 3](docs/PHASE-3-KNOWLEDGE-RAG.md), [Phase 3.5](docs/PHASE-3.5-PRODUCTION-RAG-HARDENING.md), [Phase 3.6 architecture freeze](docs/PHASE-3.6-ARCHITECTURE-FREEZE.md), [Phase 3.6A semantic foundation](docs/PHASE-3.6A-SEMANTIC-FOUNDATION.md), [Phase 3.6B provider research](docs/PHASE-3.6B-PROVIDER-RESEARCH.md), [Phase 3.6B provider architecture](docs/PHASE-3.6B-ARCHITECTURE.md), [Phase 3.6B provider foundation](docs/PHASE-3.6B-PROVIDER-FOUNDATION.md), [Phase 4 agent tools architecture](docs/PHASE-4-AGENT-TOOLS-ARCHITECTURE.md), [Multi-agent engineering roadmap](docs/MULTI-AGENT-ENGINEERING-ROADMAP.md), [API contract](docs/API.md), [Architecture](docs/ARCHITECTURE.md), and [Security](docs/SECURITY.md).

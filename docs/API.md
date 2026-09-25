@@ -1,4 +1,4 @@
-# ICEHOTT API Contract — Phases 1–3
+# ICEHOTT API Contract — Phases 1–4
 
 Base path: `/api`
 
@@ -182,6 +182,67 @@ Representative knowledge errors:
 - `query_too_long`
 - `embedding_runtime_unavailable`
 - `vector_store_unavailable`
+- `workspace_not_found`
+
+## Tool execution endpoints
+
+All tool endpoints require a valid access token and membership in the addressed workspace. Tool authorization is enforced server-side and is not delegated to the AI runtime.
+
+### GET `/api/workspaces/{workspaceId}/tools`
+
+Returns only tools the current workspace role is allowed to request, including risk class, approval requirement, minimum roles, and typed argument schema.
+
+### POST `/api/workspaces/{workspaceId}/tool-executions`
+
+Request:
+
+```json
+{
+  "toolName": "workspace.echo",
+  "arguments": {
+    "text": "hello"
+  },
+  "idempotencyKey": "client-generated-key-123"
+}
+```
+
+The server validates workspace membership, requester role, tool schema, and idempotency before persistence or execution.
+
+- `ReadOnly` tools enter `Ready` and execute immediately.
+- `SensitiveWrite` tools persist as `PendingApproval` and do not execute until approved.
+
+Reusing the same idempotency key with the same canonical arguments returns the original execution. Reusing it with different arguments returns `409 idempotency_conflict`.
+
+### GET `/api/workspaces/{workspaceId}/tool-executions`
+
+Lists recent workspace-scoped tool executions.
+
+### GET `/api/workspaces/{workspaceId}/tool-executions/{executionId}`
+
+Returns one execution only through the active workspace membership boundary, including persisted arguments/result and audit events.
+
+### POST `/api/workspaces/{workspaceId}/tool-executions/{executionId}/approve`
+
+Only applies to approval-required tools.
+
+The approver must satisfy the tool's minimum approver role and must be a different user from the requester. Successful approval transitions the execution to `Ready`, then the server executes it.
+
+### POST `/api/workspaces/{workspaceId}/tool-executions/{executionId}/reject`
+
+Rejects a pending sensitive execution. Rejected executions are terminal.
+
+Representative tool errors:
+
+- `tool_not_found`
+- `execution_not_found`
+- `invalid_arguments`
+- `invalid_idempotency_key`
+- `idempotency_conflict`
+- `forbidden`
+- `self_approval_forbidden`
+- `approval_not_required`
+- `invalid_state`
+- `tool_execution_failed`
 - `workspace_not_found`
 
 ## Roles

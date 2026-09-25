@@ -1,7 +1,11 @@
 using ICEHOTT.API.Background;
+using System.Text.Json;
 using ICEHOTT.Application.Abstractions;
 using ICEHOTT.Application.Knowledge;
+using ICEHOTT.Application.Tools;
 using ICEHOTT.Domain.Knowledge;
+using ICEHOTT.Domain.Tools;
+using ICEHOTT.Domain.Workspaces;
 using ICEHOTT.Infrastructure.Ai;
 using ICEHOTT.Persistence;
 using Microsoft.AspNetCore.Hosting;
@@ -30,6 +34,7 @@ public sealed class IcehottApiFactory : WebApplicationFactory<Program>
     {
         builder.UseEnvironment("Development");
         builder.UseSetting("KnowledgeWorker:Enabled", "false");
+        builder.UseSetting("RateLimiting:AuthPermitLimit", "1000");
         builder.ConfigureServices(services =>
         {
             services.RemoveAll<IDbContextOptionsConfiguration<ICEHOTTDbContext>>();
@@ -48,6 +53,7 @@ public sealed class IcehottApiFactory : WebApplicationFactory<Program>
             services.AddSingleton<IEmbeddingProvider, FakeEmbeddingProvider>();
             services.AddSingleton<IEmbeddingProviderRegistry, EmbeddingProviderRegistry>();
             services.AddScoped<IVectorStore, FakeVectorStore>();
+            services.AddScoped<IWorkspaceTool, FailingTestTool>();
             // IEmbeddingProfileRepository, IServingEmbeddingProfileResolver, and
             // IBuildEmbeddingProfileResolver are registered by Program.cs and will use
             // the SQLite ICEHOTTDbContext replaced above — no override needed.
@@ -149,6 +155,32 @@ public sealed class IcehottApiFactory : WebApplicationFactory<Program>
 
             return new EmbeddingBatch(profile, reply.Embeddings);
         }
+    }
+
+    private sealed class FailingTestTool : IWorkspaceTool
+    {
+        public ToolDefinition Definition { get; } = new(
+            "test.failure",
+            "Test-only tool that always fails.",
+            ToolRiskLevel.ReadOnly,
+            WorkspaceRole.Member,
+            RequiresApproval: false,
+            MinimumApproverRole: null,
+            []);
+
+        public ToolArgumentValidationResult ValidateArguments(
+            JsonElement arguments) =>
+            arguments.ValueKind == JsonValueKind.Object &&
+            !arguments.EnumerateObject().Any()
+                ? ToolArgumentValidationResult.Valid
+                : ToolArgumentValidationResult.Invalid(
+                    "Test failure tool accepts no arguments.");
+
+        public Task<ToolExecutionOutput> ExecuteAsync(
+            ToolExecutionContext context,
+            JsonElement arguments,
+            CancellationToken cancellationToken = default) =>
+            throw new InvalidOperationException("Synthetic test failure.");
     }
 
     private sealed class FakeVectorStore(ICEHOTTDbContext db) : IVectorStore

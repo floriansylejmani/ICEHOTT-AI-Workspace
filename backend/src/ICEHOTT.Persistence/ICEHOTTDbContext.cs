@@ -2,6 +2,7 @@ using ICEHOTT.Application.Abstractions;
 using ICEHOTT.Domain.Agents;
 using ICEHOTT.Domain.Knowledge;
 using ICEHOTT.Domain.Security;
+using ICEHOTT.Domain.Tools;
 using ICEHOTT.Domain.Users;
 using ICEHOTT.Domain.Workspaces;
 using Microsoft.EntityFrameworkCore;
@@ -22,6 +23,9 @@ public sealed class ICEHOTTDbContext(DbContextOptions<ICEHOTTDbContext> options)
     public DbSet<EmbeddingProfile> EmbeddingProfiles => Set<EmbeddingProfile>();
     public DbSet<RagEvaluationEvidence> RagEvaluationEvidence => Set<RagEvaluationEvidence>();
     public DbSet<KnowledgeProcessingJob> KnowledgeProcessingJobs => Set<KnowledgeProcessingJob>();
+    public DbSet<ToolExecution> ToolExecutions => Set<ToolExecution>();
+    public DbSet<ToolExecutionAuditEvent> ToolExecutionAuditEvents => Set<ToolExecutionAuditEvent>();
+    public DbSet<WorkspaceAuditNote> WorkspaceAuditNotes => Set<WorkspaceAuditNote>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {

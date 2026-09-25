@@ -6,10 +6,12 @@ using ICEHOTT.Application.Abstractions;
 using ICEHOTT.Application.Agents;
 using ICEHOTT.Application.Auth;
 using ICEHOTT.Application.Knowledge;
+using ICEHOTT.Application.Tools;
 using ICEHOTT.Application.Workspaces;
 using ICEHOTT.Infrastructure.Ai;
 using ICEHOTT.Infrastructure.Documents;
 using ICEHOTT.Infrastructure.Security;
+using ICEHOTT.Infrastructure.Tools;
 using ICEHOTT.Persistence;
 using ICEHOTT.Persistence.Repositories;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
@@ -42,6 +44,10 @@ if (!builder.Environment.IsDevelopment() && allowedOrigins.Length == 0)
     throw new InvalidOperationException("Cors:AllowedOrigins must be configured outside Development.");
 
 var autoMigrate = builder.Configuration.GetValue<bool>("Database:AutoMigrate");
+var authRateLimitPermit = Math.Clamp(
+    builder.Configuration.GetValue<int?>("RateLimiting:AuthPermitLimit") ?? 10,
+    1,
+    1000);
 var knowledgeWorker = builder.Configuration
     .GetSection(KnowledgeWorkerOptions.SectionName)
     .Get<KnowledgeWorkerOptions>() ?? new KnowledgeWorkerOptions();
@@ -65,6 +71,8 @@ builder.Services.AddScoped<IWorkspaceRepository, WorkspaceRepository>();
 builder.Services.AddScoped<IConversationRepository, ConversationRepository>();
 builder.Services.AddScoped<IKnowledgeRepository, KnowledgeRepository>();
 builder.Services.AddScoped<IKnowledgeJobQueue, KnowledgeJobQueue>();
+builder.Services.AddScoped<IToolExecutionRepository, ToolExecutionRepository>();
+builder.Services.AddScoped<IWorkspaceAuditNoteRepository, WorkspaceAuditNoteRepository>();
 builder.Services.AddScoped<IVectorStore, PostgresVectorStore>();
 builder.Services.AddScoped<IUnitOfWork>(sp => sp.GetRequiredService<ICEHOTTDbContext>());
 
@@ -115,6 +123,10 @@ builder.Services.AddScoped<EmbeddingProfileManagementService>();
 builder.Services.AddScoped<EmbeddingProfileBuildService>();
 builder.Services.AddScoped<EmbeddingProfileActivationService>();
 builder.Services.AddScoped<RagBenchmarkRunner>();
+builder.Services.AddScoped<IWorkspaceTool, WorkspaceEchoTool>();
+builder.Services.AddScoped<IWorkspaceTool, WorkspaceAuditNoteCreateTool>();
+builder.Services.AddScoped<IToolRegistry, ToolRegistry>();
+builder.Services.AddScoped<ToolExecutionService>();
 
 var promotionRequirements = RagPromotionRequirements.ProviderBenchmarkDefault with
 {
@@ -148,7 +160,7 @@ builder.Services.AddRateLimiter(options =>
             httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown",
             _ => new FixedWindowRateLimiterOptions
             {
-                PermitLimit = 10,
+                PermitLimit = authRateLimitPermit,
                 Window = TimeSpan.FromMinutes(1),
                 QueueLimit = 0,
                 AutoReplenishment = true

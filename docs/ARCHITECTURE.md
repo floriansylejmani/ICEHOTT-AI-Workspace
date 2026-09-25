@@ -146,6 +146,47 @@ Query -> IKnowledgeRetriever -> candidate expansion
 
 Processing jobs are workspace-bound and use lease ownership, heartbeats, bounded retries, and expired-lease recovery. `IEmbeddingProvider`, `IKnowledgeRetriever`, `IRagReranker`, and `IRetrievedContentPolicy` keep orchestration independent from any specific model vendor. `ICEHOTT.Rag` ActivitySource/Meter instrumentation records indexing, retrieval, filtering, and job outcomes.
 
+## Phase 4 tool execution flow
+
+```text
+User / future model tool proposal
+              |
+              v
+        ASP.NET Core API
+              |
+              +--> workspace membership
+              +--> tool registry lookup
+              +--> typed argument validation
+              +--> role permission check
+              +--> idempotency lookup/hash
+              |
+              v
+       ToolExecution persisted
+              |
+       +------+------------------+
+       |                         |
+   ReadOnly                SensitiveWrite
+       |                         |
+     Ready                 PendingApproval
+       |                         |
+       |                 Admin/Owner approval
+       |                  different user
+       |                         |
+       +-------------> Ready <---+
+                          |
+                       Running
+                          |
+             +------------+------------+
+             |                         |
+          Succeeded                  Failed
+             |
+      persisted result
+
+Every state transition also writes a workspace-bound audit event.
+```
+
+The AI runtime is advisory only at the tool boundary. It cannot authorize a workspace, approve an action, bypass typed schemas, or execute a tool directly. `ToolExecutionService` is the server-side authority for request, approval, execution, result persistence, and audit transitions.
+
 ## Tenant model
 
 ```text
