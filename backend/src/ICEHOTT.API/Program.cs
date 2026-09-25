@@ -61,6 +61,8 @@ builder.Services.AddScoped<IVectorIndexProvisioner, PostgresVectorIndexProvision
 builder.Services.AddScoped<IEmbeddingProfileCoverageService, PostgresEmbeddingProfileCoverageService>();
 builder.Services.AddScoped<IVectorStore, PostgresVectorStore>();
 builder.Services.AddScoped<IEmbeddingProfileRepository, EmbeddingProfileRepository>();
+builder.Services.AddScoped<IRagEvaluationEvidenceRepository, RagEvaluationEvidenceRepository>();
+builder.Services.AddScoped<IEmbeddingProfileActivationStore, PostgresEmbeddingProfileActivationStore>();
 builder.Services.AddScoped<IServingEmbeddingProfileResolver, ServingEmbeddingProfileResolver>();
 builder.Services.AddScoped<IBuildEmbeddingProfileResolver, BuildEmbeddingProfileResolver>();
 builder.Services.AddScoped<IUnitOfWork>(sp => sp.GetRequiredService<ICEHOTTDbContext>());
@@ -71,6 +73,7 @@ builder.Services.AddSingleton<IDocumentTextExtractor, DocumentTextExtractor>();
 builder.Services.AddSingleton<IKnowledgeChunker, StructureAwareKnowledgeChunker>();
 builder.Services.AddSingleton<IRagReranker, HybridRagReranker>();
 builder.Services.AddSingleton<IRetrievedContentPolicy, RetrievedContentPolicy>();
+builder.Services.AddSingleton(RagEvaluationPromotionPolicy.StrictV1);
 
 builder.Services.AddHttpClient<IAiRuntimeClient, AiRuntimeClient>(client =>
 {
@@ -86,6 +89,7 @@ builder.Services.AddScoped<WorkspaceService>();
 builder.Services.AddScoped<AgentService>();
 builder.Services.AddScoped<KnowledgeService>();
 builder.Services.AddScoped<KnowledgeIndexingProcessor>();
+builder.Services.AddScoped<EmbeddingProfileActivationService>();
 
 if (knowledgeWorker.Enabled)
     builder.Services.AddHostedService<KnowledgeIngestionWorker>();
