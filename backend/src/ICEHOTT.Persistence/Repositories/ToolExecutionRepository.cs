@@ -1,5 +1,6 @@
 using ICEHOTT.Application.Abstractions;
 using ICEHOTT.Domain.Tools;
+using ICEHOTT.Domain.Workspaces;
 using Microsoft.EntityFrameworkCore;
 
 namespace ICEHOTT.Persistence.Repositories;
@@ -115,6 +116,43 @@ public sealed class ToolExecutionRepository(ICEHOTTDbContext db)
     public Task<ToolPersistenceOutcome> SaveChangesAsync(
         CancellationToken cancellationToken = default) =>
         ToolPersistence.SaveAsync(db, cancellationToken);
+
+    public async Task<ToolPersistenceOutcome> SaveApprovalAsync(
+        Guid workspaceId,
+        Guid requesterUserId,
+        WorkspaceRole minimumRequesterRole,
+        Guid approverUserId,
+        WorkspaceRole minimumApproverRole,
+        CancellationToken cancellationToken = default)
+    {
+        await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
+        // PostgreSQL FOR SHARE holds both membership rows until the approval commits.
+        // Demotion/deletion must wait; on wakeup the next approval sees the new role.
+        foreach (var userId in new[] { requesterUserId, approverUserId }.OrderBy(x => x))
+        {
+            var query = db.Database.IsNpgsql()
+                ? db.WorkspaceMemberships.FromSqlInterpolated($"SELECT * FROM workspace_memberships WHERE \"WorkspaceId\" = {workspaceId} AND \"UserId\" = {userId} FOR SHARE")
+                : db.WorkspaceMemberships.Where(x => x.WorkspaceId == workspaceId && x.UserId == userId);
+            var membership = (await query.AsNoTracking().ToListAsync(cancellationToken)).SingleOrDefault();
+            var requester = userId == requesterUserId;
+            var minimum = requester ? minimumRequesterRole : minimumApproverRole;
+            if (membership is null || membership.Role < minimum)
+            {
+                ToolPersistence.DetachPendingChanges(db);
+                await transaction.RollbackAsync(CancellationToken.None);
+                return requester
+                    ? ToolPersistenceOutcome.RequesterAuthorizationConflict
+                    : ToolPersistenceOutcome.ApproverAuthorizationConflict;
+            }
+        }
+
+        var outcome = await ToolPersistence.SaveAsync(db, cancellationToken);
+        if (outcome == ToolPersistenceOutcome.Saved)
+            await transaction.CommitAsync(cancellationToken);
+        else
+            await transaction.RollbackAsync(CancellationToken.None);
+        return outcome;
+    }
 
     public async Task<ToolPersistenceOutcome> SaveAdmissionAsync(
         ToolQuotaCharge charge,

@@ -134,6 +134,78 @@ public sealed class ToolPolicyPostgresTests
         }
     }
 
+    [Fact]
+    public async Task Postgres_Requester_Removal_Racing_Approval_Fails_Closed()
+    {
+        if (string.IsNullOrWhiteSpace(Connection)) return;
+        var world = await SeedAsync();
+        var executionId = await RequestPendingNoteAsync(world);
+
+        await using var mutator = CreateContext();
+        await using var tx = await mutator.Database.BeginTransactionAsync();
+        await mutator.Database.ExecuteSqlInterpolatedAsync($"""
+            DELETE FROM workspace_memberships
+            WHERE "WorkspaceId" = {world.WorkspaceId} AND "UserId" = {world.Admin}
+            """);
+
+        var approval = Task.Run(async () =>
+        {
+            await using var db = CreateContext();
+            return await ExecutionService(db).ApproveAsync(world.Owner, world.WorkspaceId, executionId);
+        });
+
+        await Task.Delay(150);
+        Assert.False(approval.IsCompleted);
+        await tx.CommitAsync();
+
+        var result = await approval;
+        Assert.Equal("requester_no_longer_authorized", result.ErrorCode);
+
+        await using var verify = CreateContext();
+        Assert.Equal(
+            ToolExecutionStatus.PendingApproval,
+            (await verify.ToolExecutions.SingleAsync(x => x.Id == executionId)).Status);
+        Assert.Equal(0, await verify.WorkspaceAuditNotes.CountAsync(x => x.ToolExecutionId == executionId));
+        Assert.Equal(0, await verify.ToolExecutionAuditEvents.CountAsync(
+            x => x.ExecutionId == executionId && x.EventType == ToolExecutionAuditEventType.Approved));
+    }
+
+    [Fact]
+    public async Task Postgres_Approver_Demotion_Racing_Approval_Fails_Closed()
+    {
+        if (string.IsNullOrWhiteSpace(Connection)) return;
+        var world = await SeedAsync();
+        var executionId = await RequestPendingNoteAsync(world);
+
+        await using var mutator = CreateContext();
+        await using var tx = await mutator.Database.BeginTransactionAsync();
+        await mutator.Database.ExecuteSqlInterpolatedAsync($"""
+            UPDATE workspace_memberships SET "Role" = 'Member'
+            WHERE "WorkspaceId" = {world.WorkspaceId} AND "UserId" = {world.Admin2}
+            """);
+
+        var approval = Task.Run(async () =>
+        {
+            await using var db = CreateContext();
+            return await ExecutionService(db).ApproveAsync(world.Admin2, world.WorkspaceId, executionId);
+        });
+
+        await Task.Delay(150);
+        Assert.False(approval.IsCompleted);
+        await tx.CommitAsync();
+
+        var result = await approval;
+        Assert.Equal("forbidden", result.ErrorCode);
+
+        await using var verify = CreateContext();
+        Assert.Equal(
+            ToolExecutionStatus.PendingApproval,
+            (await verify.ToolExecutions.SingleAsync(x => x.Id == executionId)).Status);
+        Assert.Equal(0, await verify.WorkspaceAuditNotes.CountAsync(x => x.ToolExecutionId == executionId));
+        Assert.Equal(0, await verify.ToolExecutionAuditEvents.CountAsync(
+            x => x.ExecutionId == executionId && x.EventType == ToolExecutionAuditEventType.Approved));
+    }
+
     private sealed record World(Guid WorkspaceId, Guid Owner, Guid Admin, Guid Admin2);
 
     private static async Task<World> SeedAsync()

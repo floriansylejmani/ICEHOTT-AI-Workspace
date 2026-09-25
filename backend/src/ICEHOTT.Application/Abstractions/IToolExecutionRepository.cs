@@ -1,4 +1,5 @@
 using ICEHOTT.Domain.Tools;
+using ICEHOTT.Domain.Workspaces;
 
 namespace ICEHOTT.Application.Abstractions;
 
@@ -30,6 +31,12 @@ public enum ToolPersistenceOutcome
     /// discarded; the caller must re-evaluate under the current policy.
     /// </summary>
     PolicyConflict = 4,
+
+    /// <summary>The requester membership was removed or reduced before approval committed.</summary>
+    RequesterAuthorizationConflict = 6,
+
+    /// <summary>The approver membership was removed or reduced before approval committed.</summary>
+    ApproverAuthorizationConflict = 7,
 
     /// <summary>
     /// The (workspace, tool) request quota for the current window is used up.
@@ -95,11 +102,20 @@ public interface IToolExecutionRepository
         CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Locks and revalidates requester and approver memberships in the same
+    /// transaction that commits an approval, closing membership-change races.
+    /// </summary>
+    Task<ToolPersistenceOutcome> SaveApprovalAsync(
+        Guid workspaceId,
+        Guid requesterUserId,
+        WorkspaceRole minimumRequesterRole,
+        Guid approverUserId,
+        WorkspaceRole minimumApproverRole,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// Commits a newly admitted execution together with one quota charge, in a
-    /// single database transaction: the counter is incremented atomically (and
-    /// serialised per workspace and tool) only while it is below the limit, then
-    /// the pending changes are saved. Any non-Saved outcome - quota exhausted,
-    /// idempotency or policy race - rolls the charge back with everything else.
+    /// single transaction. Any non-Saved outcome rolls the charge back.
     /// </summary>
     Task<ToolPersistenceOutcome> SaveAdmissionAsync(
         ToolQuotaCharge charge,

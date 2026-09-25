@@ -387,6 +387,15 @@ public sealed class ToolQuotaTests(ToolBudgetFixture fx) : IClassFixture<ToolBud
         public Task<ToolPersistenceOutcome> SaveChangesAsync(CancellationToken cancellationToken = default) =>
             inner.SaveChangesAsync(cancellationToken);
 
+        public Task<ToolPersistenceOutcome> SaveApprovalAsync(
+            Guid workspaceId,
+            Guid requesterUserId,
+            WorkspaceRole minimumRequesterRole,
+            Guid approverUserId,
+            WorkspaceRole minimumApproverRole,
+            CancellationToken cancellationToken = default) =>
+            inner.SaveApprovalAsync(workspaceId, requesterUserId, minimumRequesterRole, approverUserId, minimumApproverRole, cancellationToken);
+
         public Task<ToolPersistenceOutcome> SaveAdmissionAsync(ToolQuotaCharge charge, CancellationToken cancellationToken = default) =>
             inner.SaveAdmissionAsync(charge, cancellationToken);
 

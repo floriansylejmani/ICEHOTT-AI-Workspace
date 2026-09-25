@@ -14,7 +14,7 @@ public sealed class ToolExecutionService(
     IToolPolicyRepository policies,
     IToolRegistry registry,
     TimeProvider clock,
-ToolQuotaOptions quotas,
+    ToolQuotaOptions quotas,
     IToolOperationalLog operationalLog,
     TimeSpan? handlerTimeout = null)
 {
@@ -417,7 +417,17 @@ ToolQuotaOptions quotas,
         // Guarded PendingApproval -> Ready transition. If a concurrent
         // approve/reject already moved the row, nothing is committed and the
         // handler is not run a second time.
-        var approved = await executions.SaveChangesAsync(cancellationToken);
+        var approved = await executions.SaveApprovalAsync(
+            workspaceId,
+            execution.RequestedByUserId,
+            policy.MinimumRequesterRole,
+            approverUserId,
+            policy.MinimumApproverRole ?? WorkspaceRole.Admin,
+            cancellationToken);
+        if (approved == ToolPersistenceOutcome.RequesterAuthorizationConflict)
+            return new(null, "requester_no_longer_authorized");
+        if (approved == ToolPersistenceOutcome.ApproverAuthorizationConflict)
+            return new(null, "forbidden");
         if (approved == ToolPersistenceOutcome.PolicyConflict)
             return new(null, "policy_changed");
         if (approved != ToolPersistenceOutcome.Saved)
