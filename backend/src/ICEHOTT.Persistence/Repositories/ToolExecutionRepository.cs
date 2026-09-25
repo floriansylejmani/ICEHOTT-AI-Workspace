@@ -52,6 +52,33 @@ public sealed class ToolExecutionRepository(ICEHOTTDbContext db)
             .ToListAsync(cancellationToken);
     }
 
+    public async Task<IReadOnlyList<ToolExecution>> ListExpiredRunningAsync(
+        DateTimeOffset now,
+        int limit,
+        CancellationToken cancellationToken = default)
+    {
+        var query = db.ToolExecutions
+            .Where(x => x.Status == ToolExecutionStatus.Running);
+
+        if (db.Database.ProviderName?.Contains(
+                "Sqlite",
+                StringComparison.OrdinalIgnoreCase) == true)
+        {
+            var items = await query.ToListAsync(cancellationToken);
+            return items
+                .Where(x => x.LeaseExpiresAtUtc is null || x.LeaseExpiresAtUtc <= now)
+                .OrderBy(x => x.LeaseExpiresAtUtc)
+                .Take(Math.Clamp(limit, 1, 100))
+                .ToArray();
+        }
+
+        return await query
+            .Where(x => x.LeaseExpiresAtUtc == null || x.LeaseExpiresAtUtc <= now)
+            .OrderBy(x => x.LeaseExpiresAtUtc)
+            .Take(Math.Clamp(limit, 1, 100))
+            .ToListAsync(cancellationToken);
+    }
+
     public async Task<IReadOnlyList<ToolExecutionAuditEvent>> ListAuditEventsAsync(
         Guid workspaceId,
         Guid executionId,

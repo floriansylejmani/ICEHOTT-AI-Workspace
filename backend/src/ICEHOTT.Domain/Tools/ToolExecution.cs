@@ -108,6 +108,9 @@ public sealed class ToolExecution
     public DateTimeOffset RequestedAtUtc { get; private set; }
     public DateTimeOffset? ApprovedAtUtc { get; private set; }
     public DateTimeOffset? StartedAtUtc { get; private set; }
+    public Guid? LeaseOwnerId { get; private set; }
+    public DateTimeOffset? DeadlineAtUtc { get; private set; }
+    public DateTimeOffset? LeaseExpiresAtUtc { get; private set; }
     public DateTimeOffset? CompletedAtUtc { get; private set; }
     public string? ResultJson { get; private set; }
     public string? ErrorCode { get; private set; }
@@ -149,6 +152,27 @@ public sealed class ToolExecution
 
         StartedAtUtc = startedAtUtc;
         Status = ToolExecutionStatus.Running;
+    }
+
+    public void Start(
+        DateTimeOffset startedAtUtc,
+        Guid leaseOwnerId,
+        DateTimeOffset deadlineAtUtc,
+        DateTimeOffset leaseExpiresAtUtc)
+    {
+        if (Status != ToolExecutionStatus.Ready)
+            throw new InvalidOperationException("Only ready executions can start.");
+        if (leaseOwnerId == Guid.Empty)
+            throw new ArgumentException("Lease owner is required.", nameof(leaseOwnerId));
+        if (deadlineAtUtc <= startedAtUtc)
+            throw new ArgumentOutOfRangeException(nameof(deadlineAtUtc));
+        if (leaseExpiresAtUtc <= deadlineAtUtc)
+            throw new ArgumentOutOfRangeException(nameof(leaseExpiresAtUtc));
+
+        LeaseOwnerId = leaseOwnerId;
+        DeadlineAtUtc = deadlineAtUtc;
+        LeaseExpiresAtUtc = leaseExpiresAtUtc;
+        Start(startedAtUtc);
     }
 
     public void Cancel(DateTimeOffset cancelledAtUtc)

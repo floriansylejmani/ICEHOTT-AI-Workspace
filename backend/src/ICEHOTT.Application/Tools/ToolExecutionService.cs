@@ -452,7 +452,13 @@ public sealed class ToolExecutionService(
         CancellationToken cancellationToken)
     {
         var startedAt = clock.GetUtcNow();
-        execution.Start(startedAt);
+        // A bounded lease makes an abandoned Running row discoverable after a
+        // process crash. The handler is never retried merely because it expires.
+        execution.Start(
+            startedAt,
+            Guid.NewGuid(),
+            startedAt.AddSeconds(30),
+            startedAt.AddSeconds(45));
         await executions.AddAuditEventAsync(
             Audit(
                 execution,

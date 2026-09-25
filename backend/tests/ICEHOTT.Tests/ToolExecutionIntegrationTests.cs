@@ -105,6 +105,18 @@ public sealed class ToolExecutionIntegrationTests
         var db = scope.ServiceProvider
             .GetRequiredService<ICEHOTTDbContext>();
 
+        var persisted = await db.ToolExecutions
+            .AsNoTracking()
+            .SingleAsync(x => x.Id == executionId);
+        Assert.NotNull(persisted.LeaseOwnerId);
+        Assert.NotEqual(Guid.Empty, persisted.LeaseOwnerId);
+        Assert.Equal(
+            persisted.StartedAtUtc!.Value.AddSeconds(30),
+            persisted.DeadlineAtUtc);
+        Assert.Equal(
+            persisted.StartedAtUtc!.Value.AddSeconds(45),
+            persisted.LeaseExpiresAtUtc);
+
         var events = (await db.ToolExecutionAuditEvents
                 .AsNoTracking()
                 .Where(x => x.ExecutionId == executionId)
@@ -120,6 +132,52 @@ public sealed class ToolExecutionIntegrationTests
                 ToolExecutionAuditEventType.Succeeded
             ],
             events);
+    }
+
+    [Fact]
+    public async Task Recovery_Query_Returns_Expired_And_Legacy_Running_Only()
+    {
+        using var client = _factory.CreateClient();
+        var identity = await RegisterAsync(
+            client,
+            $"lease-owner-{Guid.NewGuid():N}@icehott.dev",
+            "Lease Owner");
+        Authenticate(client, identity.Token);
+        var workspaceId = await CreateWorkspaceAsync(client, "Lease Workspace");
+        var now = DateTimeOffset.UtcNow;
+
+        ToolExecution Create(string key, DateTimeOffset? expiry)
+        {
+            var execution = new ToolExecution(
+                Guid.NewGuid(), workspaceId, identity.UserId,
+                "workspace.echo", ToolRiskLevel.ReadOnly, "{}",
+                new string('a', 64), key, false, now.AddMinutes(-2));
+            if (expiry is { } leaseExpiry)
+                execution.Start(now.AddMinutes(-1), Guid.NewGuid(),
+                    now.AddMinutes(-1).AddSeconds(15), leaseExpiry);
+            else
+                execution.Start(now.AddMinutes(-1));
+            return execution;
+        }
+
+        var expired = Create($"expired-{Guid.NewGuid():N}", now.AddSeconds(-1));
+        var active = Create($"active-{Guid.NewGuid():N}", now.AddMinutes(1));
+        var legacy = Create($"legacy-{Guid.NewGuid():N}", null);
+        var completed = Create($"done-{Guid.NewGuid():N}", now.AddSeconds(-1));
+        completed.Succeed("{}", now);
+
+        using var scope = _factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<ICEHOTTDbContext>();
+        db.ToolExecutions.AddRange(expired, active, legacy, completed);
+        await db.SaveChangesAsync();
+
+        var repository = new ICEHOTT.Persistence.Repositories.ToolExecutionRepository(db);
+        var due = await repository.ListExpiredRunningAsync(now, 10);
+
+        Assert.Contains(due, x => x.Id == expired.Id);
+        Assert.Contains(due, x => x.Id == legacy.Id);
+        Assert.DoesNotContain(due, x => x.Id == active.Id);
+        Assert.DoesNotContain(due, x => x.Id == completed.Id);
     }
 
     [Fact]

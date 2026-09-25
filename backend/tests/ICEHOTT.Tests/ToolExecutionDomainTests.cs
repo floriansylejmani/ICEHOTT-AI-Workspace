@@ -137,6 +137,37 @@ public sealed class ToolExecutionDomainTests
     }
 
     [Fact]
+    public void Running_Claim_Records_Owner_Deadline_And_Lease()
+    {
+        var execution = NewExecution(Guid.NewGuid(), false);
+        var now = DateTimeOffset.UtcNow;
+        var owner = Guid.NewGuid();
+
+        execution.Start(now, owner, now.AddSeconds(30), now.AddSeconds(45));
+
+        Assert.Equal(owner, execution.LeaseOwnerId);
+        Assert.Equal(now.AddSeconds(30), execution.DeadlineAtUtc);
+        Assert.Equal(now.AddSeconds(45), execution.LeaseExpiresAtUtc);
+    }
+
+    [Fact]
+    public void Running_Claim_Rejects_Invalid_Lease_Without_State_Change()
+    {
+        var execution = NewExecution(Guid.NewGuid(), false);
+        var now = DateTimeOffset.UtcNow;
+
+        Assert.Throws<ArgumentException>(() =>
+            execution.Start(now, Guid.Empty, now.AddSeconds(30), now.AddSeconds(45)));
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            execution.Start(now, Guid.NewGuid(), now, now.AddSeconds(45)));
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            execution.Start(now, Guid.NewGuid(), now.AddSeconds(30), now.AddSeconds(20)));
+
+        Assert.Equal(ToolExecutionStatus.Ready, execution.Status);
+        Assert.Null(execution.LeaseOwnerId);
+    }
+
+    [Fact]
     public void Registry_Rejects_Duplicate_Tool_Names()
     {
         var first = new FakeTool("workspace.same");

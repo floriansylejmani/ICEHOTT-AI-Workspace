@@ -72,6 +72,8 @@ public sealed class ToolExecutionConfiguration
             x.RequestedAtUtc
         });
 
+        builder.HasIndex(x => new { x.Status, x.LeaseExpiresAtUtc });
+
         builder.HasOne<Workspace>()
             .WithMany()
             .HasForeignKey(x => x.WorkspaceId)

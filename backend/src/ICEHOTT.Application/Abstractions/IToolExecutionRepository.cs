@@ -50,6 +50,11 @@ public interface IToolExecutionRepository
         int limit,
         CancellationToken cancellationToken = default);
 
+    Task<IReadOnlyList<ToolExecution>> ListExpiredRunningAsync(
+        DateTimeOffset now,
+        int limit,
+        CancellationToken cancellationToken = default);
+
     Task<IReadOnlyList<ToolExecutionAuditEvent>> ListAuditEventsAsync(
         Guid workspaceId,
         Guid executionId,
