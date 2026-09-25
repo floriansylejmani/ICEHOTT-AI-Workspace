@@ -83,6 +83,20 @@ ICEHOTT is a production-oriented AI workspace for agentic work: knowledge, tools
 - Versioned deterministic RAG evaluation dataset and metrics
 - Production semantic provider intentionally deferred to Phase 3.6B
 
+### Phase 3.6B — Semantic Provider Foundation
+- Separate Active serving profile and Building profile paths
+- Provider registry with explicit Query/Document purpose and provider capabilities
+- Stable-chunk blue/green vector build without replacing serving chunk IDs
+- Single-workspace external provider batching
+- Profile-scoped HNSW index provisioning and coverage checks
+- Structured deterministic/offline evaluation evidence
+- Tenant-leakage-aware benchmark runner and explicit dataset thresholds
+- PostgreSQL SERIALIZABLE activation with final coverage/index/evidence rechecks
+- Mock-tested OpenAI `text-embedding-3-small` 1536-dimensional adapter
+- Provider-configuration-aware readiness
+- Real PostgreSQL/pgvector activation rollback/swap integration tests
+- Live paid-provider benchmark and activation intentionally gated behind explicit credentials/cost authorization
+
 ## Architecture
 
 ```text
@@ -156,4 +170,4 @@ The merge gate requires:
 - EF migration script validation
 - migration application to pgvector/PostgreSQL in GitHub Actions
 
-See [Phase 1](docs/PHASE-1-IDENTITY-WORKSPACES.md), [Phase 2](docs/PHASE-2-AGENT-RUNTIME.md), [Phase 3](docs/PHASE-3-KNOWLEDGE-RAG.md), [Phase 3.5](docs/PHASE-3.5-PRODUCTION-RAG-HARDENING.md), [Phase 3.6 architecture freeze](docs/PHASE-3.6-ARCHITECTURE-FREEZE.md), [Phase 3.6A semantic foundation](docs/PHASE-3.6A-SEMANTIC-FOUNDATION.md), [Multi-agent engineering roadmap](docs/MULTI-AGENT-ENGINEERING-ROADMAP.md), [API contract](docs/API.md), [Architecture](docs/ARCHITECTURE.md), and [Security](docs/SECURITY.md).
+See [Phase 1](docs/PHASE-1-IDENTITY-WORKSPACES.md), [Phase 2](docs/PHASE-2-AGENT-RUNTIME.md), [Phase 3](docs/PHASE-3-KNOWLEDGE-RAG.md), [Phase 3.5](docs/PHASE-3.5-PRODUCTION-RAG-HARDENING.md), [Phase 3.6 architecture freeze](docs/PHASE-3.6-ARCHITECTURE-FREEZE.md), [Phase 3.6A semantic foundation](docs/PHASE-3.6A-SEMANTIC-FOUNDATION.md), [Phase 3.6B provider research](docs/PHASE-3.6B-PROVIDER-RESEARCH.md), [Phase 3.6B provider architecture](docs/PHASE-3.6B-ARCHITECTURE.md), [Phase 3.6B provider foundation](docs/PHASE-3.6B-PROVIDER-FOUNDATION.md), [Multi-agent engineering roadmap](docs/MULTI-AGENT-ENGINEERING-ROADMAP.md), [API contract](docs/API.md), [Architecture](docs/ARCHITECTURE.md), and [Security](docs/SECURITY.md).

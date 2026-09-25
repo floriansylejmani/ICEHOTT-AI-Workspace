@@ -23,9 +23,12 @@ public sealed class EmbeddingProfileConfiguration : IEntityTypeConfiguration<Emb
 
         builder.HasIndex(x => x.Key).IsUnique();
         builder.HasIndex(x => new { x.Provider, x.Model, x.Version, x.IndexVersion }).IsUnique();
-        builder.HasIndex(x => x.Status)
+        builder.HasIndex(x => x.Status, "IX_embedding_profiles_Active")
             .IsUnique()
             .HasFilter("\"Status\" = 'Active'");
+        builder.HasIndex(x => x.Status, "IX_embedding_profiles_Building")
+            .IsUnique()
+            .HasFilter("\"Status\" = 'Building'");
 
         var baselineCreatedAt = new DateTimeOffset(
             2026, 9, 24, 0, 0, 0, TimeSpan.Zero);

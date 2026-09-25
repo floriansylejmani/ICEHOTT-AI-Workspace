@@ -2,6 +2,7 @@ using ICEHOTT.API.Background;
 using ICEHOTT.Application.Abstractions;
 using ICEHOTT.Application.Knowledge;
 using ICEHOTT.Domain.Knowledge;
+using ICEHOTT.Infrastructure.Ai;
 using ICEHOTT.Persistence;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
@@ -35,14 +36,21 @@ public sealed class IcehottApiFactory : WebApplicationFactory<Program>
             services.RemoveAll<DbContextOptions<ICEHOTTDbContext>>();
             services.RemoveAll<ICEHOTTDbContext>();
             services.RemoveAll<IAiRuntimeClient>();
+            // Remove real provider and registry; replace with fakes
             services.RemoveAll<IEmbeddingProvider>();
+            services.RemoveAll<IEmbeddingProviderRegistry>();
             services.RemoveAll<IVectorStore>();
             services.RemoveAll<IHostedService>();
 
             services.AddDbContext<ICEHOTTDbContext>(options => options.UseSqlite(_connection));
             services.AddSingleton<IAiRuntimeClient, FakeAiRuntimeClient>();
+            // FakeEmbeddingProvider registered as IEmbeddingProvider so EmbeddingProviderRegistry picks it up
             services.AddSingleton<IEmbeddingProvider, FakeEmbeddingProvider>();
+            services.AddSingleton<IEmbeddingProviderRegistry, EmbeddingProviderRegistry>();
             services.AddScoped<IVectorStore, FakeVectorStore>();
+            // IEmbeddingProfileRepository, IServingEmbeddingProfileResolver, and
+            // IBuildEmbeddingProfileResolver are registered by Program.cs and will use
+            // the SQLite ICEHOTTDbContext replaced above — no override needed.
         });
     }
 
@@ -104,17 +112,42 @@ public sealed class IcehottApiFactory : WebApplicationFactory<Program>
         }
     }
 
-    private sealed class FakeEmbeddingProvider(IAiRuntimeClient runtime) : IEmbeddingProvider
+    /// <summary>
+    /// Fake embedding provider for tests. Provider name "icehott-ai-runtime" matches the
+    /// seeded baseline Active profile so the registry resolves it correctly.
+    /// </summary>
+    private sealed class FakeEmbeddingProvider(IAiRuntimeClient runtime) :
+        IEmbeddingProvider,
+        IEmbeddingProviderConfigurationProbe
     {
-        public EmbeddingProfileDescriptor Profile { get; } =
-            EmbeddingProfileDefaults.LocalDeterministic64;
+        private const string ProviderName = "icehott-ai-runtime";
+
+        public string Provider => ProviderName;
+
+        public EmbeddingProviderCapabilities Capabilities { get; } = new(
+            ProviderName,
+            new HashSet<int> { 64 },
+            MaxBatchInputs: 64,
+            MaxInputTokens: null,
+            SupportsPurposeRouting: false);
+
+        public bool IsConfigured(EmbeddingProfileDescriptor profile) =>
+            profile == EmbeddingProfileDefaults.LocalDeterministic64;
 
         public async Task<EmbeddingBatch> EmbedAsync(
+            EmbeddingProfileDescriptor profile,
+            EmbeddingPurpose purpose,
             IReadOnlyList<string> texts,
             CancellationToken cancellationToken = default)
         {
             var reply = await runtime.EmbedAsync(texts, cancellationToken);
-            return new EmbeddingBatch(Profile, reply.Embeddings);
+
+            if (reply.Dimensions != profile.Dimensions)
+                throw new EmbeddingProviderException(
+                    $"Fake provider: runtime returned {reply.Dimensions} dimensions but profile requires {profile.Dimensions}.",
+                    EmbeddingFailureKind.ProfileMismatch);
+
+            return new EmbeddingBatch(profile, reply.Embeddings);
         }
     }
 
@@ -138,6 +171,7 @@ public sealed class IcehottApiFactory : WebApplicationFactory<Program>
             string queryText,
             IReadOnlyList<float> queryEmbedding,
             int limit,
+            bool allowBuildingProfile = false,
             CancellationToken cancellationToken = default)
         {
             var documents = await db.KnowledgeDocuments.AsNoTracking()

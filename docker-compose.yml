@@ -49,6 +49,7 @@ services:
       Database__AutoMigrate: "true"
       AiRuntime__BaseUrl: http://ai:8000
       AiRuntime__TimeoutSeconds: "30"
+      OpenAiEmbedding__ApiKey: ${OPENAI_API_KEY:-}
     ports:
       - "5050:8080"
     depends_on:

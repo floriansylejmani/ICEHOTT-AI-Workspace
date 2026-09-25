@@ -7,11 +7,16 @@ namespace ICEHOTT.Application.Knowledge;
 public sealed class KnowledgeIndexingProcessor(
     IKnowledgeRepository knowledge,
     IKnowledgeChunker chunker,
-    IEmbeddingProvider embeddings,
+    IServingEmbeddingProfileResolver servingProfileResolver,
+    IEmbeddingProviderRegistry providerRegistry,
     IVectorStore vectorStore,
     IUnitOfWork unitOfWork,
     TimeProvider clock)
 {
+    // Application-level batch cap. Effective batch = min(AppBatchCap, provider.MaxBatchInputs).
+    // This separates the application limit from the per-provider limit introduced in Phase 3.6B.
+    private const int AppBatchCap = 512;
+
     public async Task<int> ProcessAsync(
         Guid workspaceId,
         Guid documentId,
@@ -35,8 +40,17 @@ public sealed class KnowledgeIndexingProcessor(
                 return 0;
             }
 
-            var configuredProfile = embeddings.Profile;
+            // Ordinary ingestion always targets the Active serving profile.
+            // Building-profile migrations have a separate stable-chunk build path so
+            // ReplaceChunks cannot cascade-delete vectors that are still serving traffic.
+            var configuredProfile =
+                await servingProfileResolver.ResolveAsync(cancellationToken);
+
             configuredProfile.Validate();
+            activity?.SetTag("rag.profile_kind", "serving");
+
+            var provider = providerRegistry.Resolve(configuredProfile.Provider);
+            var effectiveBatchSize = Math.Min(AppBatchCap, provider.Capabilities.MaxBatchInputs);
 
             document.MarkProcessing();
             await unitOfWork.SaveChangesAsync(cancellationToken);
@@ -47,6 +61,8 @@ public sealed class KnowledgeIndexingProcessor(
 
             var embedded = await EmbedInBatchesAsync(
                 configuredProfile,
+                provider,
+                effectiveBatchSize,
                 chunkTexts,
                 cancellationToken);
 
@@ -90,6 +106,7 @@ public sealed class KnowledgeIndexingProcessor(
             RagTelemetry.IndexingDurationMs.Record(stopwatch.Elapsed.TotalMilliseconds);
             RagTelemetry.IndexedChunks.Record(chunks.LongLength);
             activity?.SetTag("rag.chunk_count", chunks.Length);
+            activity?.SetTag("rag.effective_batch_size", effectiveBatchSize);
             SetProfileTags(activity, embedded.Profile);
             activity?.SetStatus(ActivityStatusCode.Ok);
 
@@ -105,18 +122,23 @@ public sealed class KnowledgeIndexingProcessor(
         }
     }
 
-    private async Task<EmbeddingBatch> EmbedInBatchesAsync(
+    private static async Task<EmbeddingBatch> EmbedInBatchesAsync(
         EmbeddingProfileDescriptor expectedProfile,
+        IEmbeddingProvider provider,
+        int batchSize,
         IReadOnlyList<string> texts,
         CancellationToken cancellationToken)
     {
-        const int batchSize = 64;
         var output = new List<IReadOnlyList<float>>(texts.Count);
 
         for (var start = 0; start < texts.Count; start += batchSize)
         {
             var batch = texts.Skip(start).Take(batchSize).ToArray();
-            var reply = await embeddings.EmbedAsync(batch, cancellationToken);
+            var reply = await provider.EmbedAsync(
+                expectedProfile,
+                EmbeddingPurpose.Document,
+                batch,
+                cancellationToken);
 
             if (reply.Embeddings.Count != batch.Length)
                 throw new EmbeddingProviderException(

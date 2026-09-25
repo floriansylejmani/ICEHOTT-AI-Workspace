@@ -20,6 +20,7 @@ public sealed class ICEHOTTDbContext(DbContextOptions<ICEHOTTDbContext> options)
     public DbSet<KnowledgeDocument> KnowledgeDocuments => Set<KnowledgeDocument>();
     public DbSet<KnowledgeChunk> KnowledgeChunks => Set<KnowledgeChunk>();
     public DbSet<EmbeddingProfile> EmbeddingProfiles => Set<EmbeddingProfile>();
+    public DbSet<RagEvaluationEvidence> RagEvaluationEvidence => Set<RagEvaluationEvidence>();
     public DbSet<KnowledgeProcessingJob> KnowledgeProcessingJobs => Set<KnowledgeProcessingJob>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)

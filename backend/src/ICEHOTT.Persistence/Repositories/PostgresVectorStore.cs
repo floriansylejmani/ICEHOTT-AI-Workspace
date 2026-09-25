@@ -133,6 +133,7 @@ public sealed class PostgresVectorStore(ICEHOTTDbContext db) : IVectorStore
         string queryText,
         IReadOnlyList<float> queryEmbedding,
         int limit,
+        bool allowBuildingProfile = false,
         CancellationToken cancellationToken = default)
     {
         ValidateProfile(profile);
@@ -153,11 +154,14 @@ public sealed class PostgresVectorStore(ICEHOTTDbContext db) : IVectorStore
                 connection,
                 transaction: null,
                 profile,
-                requireActive: true,
+                requireActive: !allowBuildingProfile,
                 cancellationToken);
 
             await using var command = connection.CreateCommand();
             var dimensions = profile.Dimensions;
+            var allowedProfileStatus = allowBuildingProfile
+                ? "IN ('Active', 'Building')"
+                : "= 'Active'";
             command.CommandText = $"""
                 WITH ranked AS (
                     SELECT
@@ -192,7 +196,7 @@ public sealed class PostgresVectorStore(ICEHOTTDbContext db) : IVectorStore
                        AND d."WorkspaceId" = c."WorkspaceId"
                     WHERE e."WorkspaceId" = @workspaceId
                       AND e."EmbeddingProfileId" = @profileId
-                      AND p."Status" = 'Active'
+                      AND p."Status" {allowedProfileStatus}
                       AND c."WorkspaceId" = @workspaceId
                       AND d."WorkspaceId" = @workspaceId
                       AND d."Status" = 'Ready'
