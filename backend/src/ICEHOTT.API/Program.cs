@@ -48,6 +48,11 @@ var authRateLimitPermit = Math.Clamp(
     builder.Configuration.GetValue<int?>("RateLimiting:AuthPermitLimit") ?? 10,
     1,
     1000);
+var toolQuotas = builder.Configuration
+    .GetSection(ToolQuotaOptions.SectionName)
+    .Get<ToolQuotaOptions>() ?? new ToolQuotaOptions();
+if (toolQuotas.Validate() is { Count: > 0 } toolQuotaErrors)
+    throw new InvalidOperationException(string.Join(" ", toolQuotaErrors));
 var knowledgeWorker = builder.Configuration
     .GetSection(KnowledgeWorkerOptions.SectionName)
     .Get<KnowledgeWorkerOptions>() ?? new KnowledgeWorkerOptions();
@@ -127,7 +132,7 @@ builder.Services.AddScoped<RagBenchmarkRunner>();
 builder.Services.AddScoped<IWorkspaceTool, WorkspaceEchoTool>();
 builder.Services.AddScoped<IWorkspaceTool, WorkspaceAuditNoteCreateTool>();
 builder.Services.AddScoped<IToolRegistry, ToolRegistry>();
-builder.Services.AddSingleton(builder.Configuration.GetSection(ToolQuotaOptions.SectionName).Get<ToolQuotaOptions>() ?? new ToolQuotaOptions());
+builder.Services.AddSingleton(toolQuotas);
 builder.Services.AddSingleton<IToolOperationalLog, ToolOperationalLog>();
 builder.Services.AddScoped<ToolExecutionService>();
 builder.Services.AddScoped<ToolExecutionRecoveryService>();

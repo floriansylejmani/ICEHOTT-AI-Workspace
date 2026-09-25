@@ -1,4 +1,5 @@
 using System.Security.Claims;
+using ICEHOTT.API.Filters;
 using ICEHOTT.API.Models;
 using ICEHOTT.Application.Tools;
 using Microsoft.AspNetCore.Authorization;
@@ -9,6 +10,7 @@ namespace ICEHOTT.API.Controllers;
 [ApiController]
 [Authorize]
 [Route("api/workspaces/{workspaceId:guid}")]
+[RequestBodyLimit(ToolRequestLimits.MaxExecutionRequestBytes)]
 public sealed class ToolsController(
     ToolExecutionService tools) : ControllerBase
 {
@@ -171,6 +173,9 @@ public sealed class ToolsController(
                         code = result.ErrorCode,
                         execution = result.Value
                     }),
+            "tool_quota_exceeded" =>
+                TooManyRequests(result),
+
 
             "tool_execution_failed" =>
                 StatusCode(
@@ -183,6 +188,23 @@ public sealed class ToolsController(
 
             _ => BadRequest(payload)
         };
+    }
+
+    private ObjectResult TooManyRequests<T>(
+        ToolOperationResult<T> result)
+    {
+        var retryAfter = Math.Max(1, result.RetryAfterSeconds ?? 1);
+        Response.Headers.RetryAfter = retryAfter.ToString(
+            System.Globalization.CultureInfo.InvariantCulture);
+
+        return StatusCode(
+            StatusCodes.Status429TooManyRequests,
+            new
+            {
+                code = result.ErrorCode,
+                errors = result.ValidationErrors,
+                retryAfterSeconds = retryAfter
+            });
     }
 
     private Guid CurrentUserId() =>

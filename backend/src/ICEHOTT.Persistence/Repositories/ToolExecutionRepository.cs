@@ -116,10 +116,60 @@ public sealed class ToolExecutionRepository(ICEHOTTDbContext db)
         CancellationToken cancellationToken = default) =>
         ToolPersistence.SaveAsync(db, cancellationToken);
 
-    public Task<ToolPersistenceOutcome> SaveAdmissionAsync(
+    public async Task<ToolPersistenceOutcome> SaveAdmissionAsync(
         ToolQuotaCharge charge,
-        CancellationToken cancellationToken = default) =>
-        ToolPersistence.SaveAsync(db, cancellationToken);
+        CancellationToken cancellationToken = default)
+    {
+        await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
+
+        // The charge is taken first so concurrent admissions for the same
+        // (workspace, tool) serialise on the counter row before any other lock.
+        if (!await TryChargeAsync(charge, cancellationToken))
+        {
+            ToolPersistence.DetachPendingChanges(db);
+            await transaction.RollbackAsync(CancellationToken.None);
+            return ToolPersistenceOutcome.QuotaExceeded;
+        }
+
+        // EF wraps this SaveChanges in a savepoint, so a failed insert leaves
+        // the transaction usable for ToolPersistence's race classification.
+        var outcome = await ToolPersistence.SaveAsync(db, cancellationToken);
+        if (outcome != ToolPersistenceOutcome.Saved)
+        {
+            await transaction.RollbackAsync(CancellationToken.None);
+            return outcome;
+        }
+
+        await transaction.CommitAsync(cancellationToken);
+        return outcome;
+    }
+
+    /// <summary>
+    /// Single-statement conditional upsert. A new window resets the count; the
+    /// current window increments only below the limit. PostgreSQL row-locks the
+    /// conflicting row and re-evaluates the WHERE on its latest committed
+    /// version, so concurrent charges can never overshoot the limit. A row
+    /// with a later window (clock skew between nodes) is treated as current.
+    /// Returns whether a row was inserted or updated.
+    /// </summary>
+    private async Task<bool> TryChargeAsync(
+        ToolQuotaCharge charge,
+        CancellationToken cancellationToken)
+    {
+        var affected = await db.Database.ExecuteSqlInterpolatedAsync($"""
+            INSERT INTO tool_quota_counters AS c ("WorkspaceId", "ToolName", "WindowStartUnixSeconds", "Count")
+            VALUES ({charge.WorkspaceId}, {charge.ToolName}, {charge.WindowStartUnixSeconds}, 1)
+            ON CONFLICT ("WorkspaceId", "ToolName") DO UPDATE SET
+                "Count" = CASE WHEN excluded."WindowStartUnixSeconds" > c."WindowStartUnixSeconds"
+                               THEN 1 ELSE c."Count" + 1 END,
+                "WindowStartUnixSeconds" = CASE WHEN excluded."WindowStartUnixSeconds" > c."WindowStartUnixSeconds"
+                               THEN excluded."WindowStartUnixSeconds" ELSE c."WindowStartUnixSeconds" END
+            WHERE excluded."WindowStartUnixSeconds" > c."WindowStartUnixSeconds"
+               OR c."Count" < {charge.PermitLimit}
+            """, cancellationToken);
+
+        return affected > 0;
+    }
 
     public void DiscardPendingSideEffects(ToolExecution execution)
     {
