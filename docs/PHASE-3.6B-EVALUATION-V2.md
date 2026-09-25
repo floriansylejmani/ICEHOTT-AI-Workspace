@@ -1,6 +1,6 @@
 # Phase 3.6B — Expanded Evaluation Dataset v2
 
-Status: deterministic corpus expansion complete; live benchmark harness implemented; paid provider execution not yet authorized
+Status: deterministic corpus expansion complete; authorized live deterministic + offline semantic promotion gate PASS on 2026-09-25
 Dataset: `evals/rag/v2/dataset.json`
 Version: `rag-v2`
 
@@ -46,4 +46,4 @@ Current thresholds:
 
 The local deterministic baseline passes the v2 gate without lowering thresholds.
 
-This does not establish semantic-provider superiority. The next gate is 3.6B-7 live provider benchmarking with explicitly authorized credentials and provider usage cost.
+This dataset does not establish semantic-provider superiority by itself. The authorized 3.6B-7 run on 2026-09-25 passed deterministic and offline semantic promotion gates for the tested OpenAI candidate, with zero tenant leakage and measured provider cost below the approved cap.

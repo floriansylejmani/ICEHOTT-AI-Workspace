@@ -5,7 +5,8 @@ public sealed record RagEvaluationObservation(
     IReadOnlyList<string> ExpectedSources,
     IReadOnlyList<string> RetrievedSources,
     bool CitationCorrect,
-    bool TenantLeakage);
+    bool TenantLeakage,
+    bool IsNegativeSafetyControl = false);
 
 public sealed record RagEvaluationSummary(
     int CaseCount,
@@ -28,6 +29,7 @@ public static class RagEvaluationMetrics
         double precision = 0;
         double citationCorrect = 0;
         var tenantLeakage = 0;
+        var retrievalCaseCount = 0;
 
         foreach (var observation in observations)
         {
@@ -42,12 +44,18 @@ public static class RagEvaluationMetrics
 
             if (expected.Count == 0)
             {
-                if (retrieved.Count == 0) hits++;
-                recall += 1;
-                precision += retrieved.Count == 0 ? 1 : 0;
+                if (!observation.IsNegativeSafetyControl)
+                {
+                    retrievalCaseCount++;
+                    if (retrieved.Count == 0) hits++;
+                    recall += 1;
+                    precision += retrieved.Count == 0 ? 1 : 0;
+                }
             }
             else
             {
+                retrievalCaseCount++;
+
                 if (relevantRetrieved > 0) hits++;
                 recall += relevantRetrieved / (double)expected.Count;
                 precision += retrieved.Count == 0
@@ -59,11 +67,15 @@ public static class RagEvaluationMetrics
             if (observation.TenantLeakage) tenantLeakage++;
         }
 
+        var retrievalDenominator = retrievalCaseCount == 0
+            ? 1
+            : retrievalCaseCount;
+
         return new RagEvaluationSummary(
             observations.Count,
-            hits / observations.Count,
-            recall / observations.Count,
-            precision / observations.Count,
+            retrievalCaseCount == 0 ? 0 : hits / retrievalDenominator,
+            retrievalCaseCount == 0 ? 0 : recall / retrievalDenominator,
+            retrievalCaseCount == 0 ? 0 : precision / retrievalDenominator,
             citationCorrect / observations.Count,
             tenantLeakage);
     }

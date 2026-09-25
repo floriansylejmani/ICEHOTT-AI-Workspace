@@ -41,6 +41,8 @@ Phase 3.6B Foundation validates provider contracts and blue/green promotion mech
 
 Phase 3.6B evaluation dataset v2 expands the deterministic corpus to 13 synthetic documents and 18 cases across support, security, retention, reliability, billing, identity, data management, API, residency, prompt-injection safety, and tenant isolation. The exact corpus is hash-locked in `evals/rag/v2/dataset.sha256`. Passing v2 is a prerequisite for the opt-in live provider benchmark; it is not by itself a semantic-quality claim.
 
+On 2026-09-25, the authorized OpenAI candidate benchmark completed against `rag-v2`. Deterministic HitRate@K, recall, precision, and citation correctness were all 1.00 with zero tenant leakage. A separate bounded `gpt-6-luna` offline judge evaluated 17 positive cases; groundedness, answer relevance, faithfulness, context precision, context recall, and citation correctness were all 1.00 with zero tenant leakage. The production promotion policy passed. Measured total provider cost was $0.00100536 against a $0.05 approved cap. This evidence establishes that this candidate met the frozen ICEHOTT promotion gate for this dataset/run; it is not a general claim of provider superiority.
+
 ## Agent metrics
 - Task completion rate
 - Tool-call success rate

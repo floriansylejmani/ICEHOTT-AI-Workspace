@@ -10,7 +10,8 @@ public sealed record RagBenchmarkCase(
     IReadOnlyList<string> ExpectedSources,
     IReadOnlyList<string> ForbiddenSources,
     int TopK,
-    IReadOnlyList<string>? TenantForbiddenSources = null);
+    IReadOnlyList<string>? TenantForbiddenSources = null,
+    bool IsNegativeSafetyControl = false);
 
 public sealed record RagBenchmarkThresholds(
     double HitRateAtK,
@@ -90,7 +91,7 @@ public sealed class RagBenchmarkRunner(
                 .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
             var expectedSatisfied = expected.Count == 0
-                ? retrieved.Count == 0
+                ? testCase.IsNegativeSafetyControl || retrieved.Count == 0
                 : expected.All(retrieved.Contains);
 
             var forbiddenAbsent =
@@ -106,7 +107,9 @@ public sealed class RagBenchmarkRunner(
                     expectedSatisfied &&
                     forbiddenAbsent &&
                     !tenantLeakage,
-                TenantLeakage: tenantLeakage));
+                TenantLeakage: tenantLeakage,
+                IsNegativeSafetyControl:
+                    testCase.IsNegativeSafetyControl));
 
             if (totalInputTokens is not null)
             {
