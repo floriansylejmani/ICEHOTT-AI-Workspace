@@ -213,6 +213,13 @@ The server validates workspace membership, requester role, tool schema, and idem
 
 Reusing the same idempotency key with the same canonical arguments returns the original execution. Reusing it with different arguments returns `409 idempotency_conflict`.
 
+Phase 4.5 packet C bounds (see `docs/PHASE-4.5-C-BUDGETS-SECRETS.md`):
+
+- Request bodies above 32 KiB (4 KiB for tool policy updates) are rejected with `413 request_body_too_large` before JSON parsing.
+- Credential-named fields (for example `password`, `apiKey`, `client_secret`) and recognised credential formats in arguments or the idempotency key are rejected with `400 credential_rejected`. Errors name the JSON path and detector, never the value.
+- Each workspace has a request quota per tool and fixed window. A new admission beyond it returns `429 tool_quota_exceeded` with a `Retry-After` header and `retryAfterSeconds` in the body. An exact idempotent retry of an admitted execution is never charged again and is answered with that execution even while the quota is exhausted.
+- Results, arguments and idempotency keys in responses are redacted; recognised credentials appear as `[REDACTED]`.
+
 ### GET `/api/workspaces/{workspaceId}/tool-executions`
 
 Lists recent workspace-scoped tool executions.
@@ -244,6 +251,9 @@ Representative tool errors:
 - `invalid_state`
 - `tool_execution_failed`
 - `workspace_not_found`
+- `credential_rejected` (400)
+- `request_body_too_large` (413)
+- `tool_quota_exceeded` (429, `Retry-After`)
 
 ## Roles
 

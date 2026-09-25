@@ -1,5 +1,6 @@
 using System.Security.Claims;
 using System.Text.Json;
+using ICEHOTT.API.Filters;
 using ICEHOTT.Application.Tools;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -14,6 +15,7 @@ namespace ICEHOTT.API.Controllers;
 [ApiController]
 [Authorize]
 [Route("api/workspaces/{workspaceId:guid}/tool-policies")]
+[RequestBodyLimit(ToolRequestLimits.MaxPolicyRequestBytes)]
 public sealed class ToolPoliciesController(ToolPolicyService policies) : ControllerBase
 {
     [HttpGet]

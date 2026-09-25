@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using ICEHOTT.Application.Abstractions;
+using ICEHOTT.Application.Security;
 using ICEHOTT.Domain.Tools;
 using ICEHOTT.Domain.Workspaces;
 
@@ -97,6 +98,13 @@ public sealed class ToolExecutionService(
                 "invalid_arguments",
                 ["Tool arguments must be a JSON object."]);
 
+        // C6: credentials never enter persisted arguments, responses, audit or
+        // logs, so they are refused before tool validation (which may echo
+        // argument names) and before anything is stored or charged.
+        var credentialErrors = CredentialErrors(arguments, idempotencyKey);
+        if (credentialErrors.Count > 0)
+            return new(null, "credential_rejected", credentialErrors);
+
         // JsonElement lookups resolve duplicate property names to the LAST
         // occurrence, while canonicalization persists ALL occurrences. Without
         // this check an earlier duplicate would be stored and hashed without
@@ -163,6 +171,15 @@ public sealed class ToolExecutionService(
                 now),
             cancellationToken);
 
+        // C2: the quota is charged in the same transaction as the insert, so a
+        // lost idempotency or policy race also rolls the charge back.
+        var quota = quotas.Resolve(tool.Definition.Name);
+        var charge = new ToolQuotaCharge(
+            workspaceId,
+            tool.Definition.Name,
+            quota.WindowStart(now),
+            quota.PermitLimit);
+
         // D6: an execution that runs right away is decided under the policy
         // version just read; commit only if that version is still current.
         // (A PendingApproval row is re-evaluated at approval instead.)
@@ -174,9 +191,29 @@ public sealed class ToolExecutionService(
                 now,
                 cancellationToken);
 
-        var inserted = await executions.SaveChangesAsync(cancellationToken);
+        var inserted = await executions.SaveAdmissionAsync(charge, cancellationToken);
         if (inserted == ToolPersistenceOutcome.PolicyConflict)
             return new(null, "policy_changed");
+
+        if (inserted == ToolPersistenceOutcome.QuotaExceeded)
+        {
+            // C3: a retry that lost the race to a concurrent request with the
+            // same key (which may have taken the last permit) is a replay of
+            // that execution, not a new admission.
+            var admitted = await executions.FindByIdempotencyAsync(
+                workspaceId,
+                tool.Definition.Name,
+                idempotencyKey.Trim(),
+                cancellationToken);
+
+            return admitted is not null
+                ? await ReplayAsync(admitted, argumentsHash, cancellationToken)
+                : new(
+                    null,
+                    "tool_quota_exceeded",
+                    ["The request quota for this tool in this workspace is exhausted."],
+                    quota.RetryAfterSeconds(now));
+        }
 
         if (inserted == ToolPersistenceOutcome.DuplicateIdempotencyKey)
         {
@@ -503,11 +540,13 @@ public sealed class ToolExecutionService(
                 CancellationToken.None);
             throw;
         }
-        catch
+        catch (Exception exception)
         {
             // A handler may have staged writes before throwing. They must not
             // be committed together with the Failed status: a Failed execution
-            // has no side effects. Exception details are never persisted.
+            // has no side effects. Exception details are never persisted; the
+            // operational log receives a redacted diagnostic only (C8).
+            operationalLog.HandlerFailed(execution, exception);
             executions.DiscardPendingSideEffects(execution);
             var failedAt = clock.GetUtcNow();
             execution.Fail(
@@ -531,8 +570,10 @@ public sealed class ToolExecutionService(
         }
 
         var completedAt = clock.GetUtcNow();
+        // C7: handler results can echo upstream data; credentials are redacted
+        // before the result is stored or returned.
         execution.Succeed(
-            output.ResultJson,
+            SecretClassifier.RedactJson(output.ResultJson),
             completedAt);
         await executions.AddAuditEventAsync(
             Audit(
@@ -573,6 +614,21 @@ public sealed class ToolExecutionService(
             null);
     }
 
+    private static IReadOnlyList<string> CredentialErrors(
+        JsonElement arguments,
+        string idempotencyKey)
+    {
+        var errors = SecretClassifier.Scan(arguments)
+            .Select(finding =>
+                $"Argument '{finding.Path}' looks like a credential ({finding.Detector}); credentials are not accepted.")
+            .ToList();
+
+        if (SecretClassifier.FindCredential(idempotencyKey) is { } detector)
+            errors.Add($"Idempotency key looks like a credential ({detector}).");
+
+        return errors;
+    }
+
     private static bool HasDuplicateProperties(JsonElement element)
     {
         switch (element.ValueKind)
@@ -609,11 +665,15 @@ public sealed class ToolExecutionService(
             execution.Id,
             cancellationToken);
 
-        using var arguments = JsonDocument.Parse(execution.ArgumentsJson);
+        // C7: rows stored before credential screening existed may still hold
+        // secrets; views are always redacted.
+        using var arguments = JsonDocument.Parse(
+            SecretClassifier.RedactJson(execution.ArgumentsJson));
         JsonElement? result = null;
         if (!string.IsNullOrWhiteSpace(execution.ResultJson))
         {
-            using var resultDocument = JsonDocument.Parse(execution.ResultJson);
+            using var resultDocument = JsonDocument.Parse(
+                SecretClassifier.RedactJson(execution.ResultJson));
             result = resultDocument.RootElement.Clone();
         }
 
@@ -624,7 +684,7 @@ public sealed class ToolExecutionService(
             execution.ToolName,
             execution.RiskLevel,
             execution.Status,
-            execution.IdempotencyKey,
+            SecretClassifier.Redact(execution.IdempotencyKey),
             arguments.RootElement.Clone(),
             execution.ApprovedByUserId,
             execution.RequestedAtUtc,

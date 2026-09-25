@@ -31,9 +31,18 @@ public enum ToolPersistenceOutcome
     /// </summary>
     PolicyConflict = 4,
 
+    /// <summary>
+    /// The (workspace, tool) request quota for the current window is used up.
+    /// Nothing was committed and pending changes were discarded.
+    /// </summary>
     QuotaExceeded = 5
 }
 
+/// <summary>
+/// One admission charged against the (workspace, tool) counter for the window
+/// starting at <see cref="WindowStartUnixSeconds"/>, allowed only while fewer
+/// than <see cref="PermitLimit"/> admissions were charged in that window.
+/// </summary>
 public sealed record ToolQuotaCharge(
     Guid WorkspaceId,
     string ToolName,
@@ -80,6 +89,13 @@ public interface IToolExecutionRepository
     Task<ToolPersistenceOutcome> SaveChangesAsync(
         CancellationToken cancellationToken = default);
 
+    /// <summary>
+    /// Commits a newly admitted execution together with one quota charge, in a
+    /// single database transaction: the counter is incremented atomically (and
+    /// serialised per workspace and tool) only while it is below the limit, then
+    /// the pending changes are saved. Any non-Saved outcome - quota exhausted,
+    /// idempotency or policy race - rolls the charge back with everything else.
+    /// </summary>
     Task<ToolPersistenceOutcome> SaveAdmissionAsync(
         ToolQuotaCharge charge,
         CancellationToken cancellationToken = default);
