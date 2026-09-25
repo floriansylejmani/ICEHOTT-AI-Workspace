@@ -115,6 +115,23 @@ public sealed class ToolsController(
             : MapError(result);
     }
 
+    [HttpPost("tool-executions/{executionId:guid}/cancel")]
+    public async Task<IActionResult> Cancel(
+        Guid workspaceId,
+        Guid executionId,
+        CancellationToken cancellationToken)
+    {
+        var result = await tools.CancelAsync(
+            CurrentUserId(),
+            workspaceId,
+            executionId,
+            cancellationToken);
+
+        return result.Succeeded
+            ? Ok(result.Value)
+            : MapError(result);
+    }
+
     private IActionResult MapError<T>(
         ToolOperationResult<T> result)
     {
@@ -139,11 +156,21 @@ public sealed class ToolsController(
 
             "idempotency_conflict" or
             "invalid_state" or
+            "execution_running" or
             "requester_no_longer_authorized" or
             "tool_disabled" or
             "policy_changed" or
             "policy_limit_exceeded" =>
                 Conflict(payload),
+
+            "tool_timeout" =>
+                StatusCode(
+                    StatusCodes.Status504GatewayTimeout,
+                    new
+                    {
+                        code = result.ErrorCode,
+                        execution = result.Value
+                    }),
 
             "tool_execution_failed" =>
                 StatusCode(

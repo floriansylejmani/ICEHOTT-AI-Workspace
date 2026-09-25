@@ -222,6 +222,58 @@ public sealed class ToolExecutionHardeningTests(ToolSecurityFixture fx)
         Assert.Equal(0, await fx.CountExecutionsAsync(workspaceId));
     }
 
+    [Fact]
+    public async Task ReadOnly_Handler_Timeout_Is_Terminal_And_Audited()
+    {
+        var workspaceId = await fx.CreateWorkspaceAsync(fx.Owner);
+        using var scope = fx.Factory.Services.CreateScope();
+        var service = new ToolExecutionService(
+            scope.ServiceProvider.GetRequiredService<IWorkspaceRepository>(),
+            scope.ServiceProvider.GetRequiredService<IToolExecutionRepository>(),
+            scope.ServiceProvider.GetRequiredService<IToolPolicyRepository>(),
+            new ToolRegistry([new SlowTool()]),
+            TimeProvider.System,
+            TimeSpan.FromMilliseconds(50));
+
+        var result = await service.RequestAsync(
+            fx.Owner.UserId, workspaceId, SlowTool.Name,
+            Args(new { text = "wait" }), NewKey("timeout"));
+
+        Assert.Equal("tool_timeout", result.ErrorCode);
+        Assert.Equal(ToolExecutionStatus.TimedOut, result.Value!.Status);
+        Assert.Contains(ToolExecutionAuditEventType.TimedOut,
+            await fx.AuditTrailAsync(result.Value.Id));
+    }
+
+    [Fact]
+    public async Task Sensitive_Handler_Timeout_Preserves_Unknown_Outcome()
+    {
+        var workspaceId = await fx.CreateWorkspaceAsync(
+            fx.Owner, (fx.Admin, WorkspaceRole.Admin));
+        using var scope = fx.Factory.Services.CreateScope();
+        var service = new ToolExecutionService(
+            scope.ServiceProvider.GetRequiredService<IWorkspaceRepository>(),
+            scope.ServiceProvider.GetRequiredService<IToolExecutionRepository>(),
+            scope.ServiceProvider.GetRequiredService<IToolPolicyRepository>(),
+            new ToolRegistry([new SlowSensitiveTool()]),
+            TimeProvider.System,
+            TimeSpan.FromMilliseconds(50));
+
+        var pending = await service.RequestAsync(
+            fx.Admin.UserId, workspaceId, SlowSensitiveTool.Name,
+            Args(new { text = "wait" }), NewKey("sensitive-timeout"));
+        Assert.Equal(ToolExecutionStatus.PendingApproval, pending.Value!.Status);
+
+        var result = await service.ApproveAsync(
+            fx.Owner.UserId, workspaceId, pending.Value.Id);
+
+        Assert.Equal("tool_timeout", result.ErrorCode);
+        Assert.Equal(ToolExecutionStatus.OutcomeUnknown, result.Value!.Status);
+        Assert.Equal("tool_outcome_unknown", result.Value.ErrorCode);
+        Assert.Contains(ToolExecutionAuditEventType.OutcomeUnknown,
+            await fx.AuditTrailAsync(result.Value.Id));
+    }
+
     private async Task<Guid> RequestPendingNoteAsync(Guid workspaceId, string message)
     {
         using var scope = fx.Factory.Services.CreateScope();
@@ -293,6 +345,45 @@ public sealed class ToolExecutionHardeningTests(ToolSecurityFixture fx)
 
             throw new InvalidOperationException(
                 "Downstream failure: Host=db;Username=icehott;Password=hunter2");
+        }
+    }
+
+    private sealed class SlowTool : IWorkspaceTool
+    {
+        public const string Name = "test.slow";
+        public ToolDefinition Definition { get; } = ReadOnlyDefinition(Name);
+        public ToolArgumentValidationResult ValidateArguments(JsonElement arguments) =>
+            ValidateText(arguments);
+
+        public async Task<ToolExecutionOutput> ExecuteAsync(
+            ToolExecutionContext context,
+            JsonElement arguments,
+            CancellationToken cancellationToken = default)
+        {
+            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+            return new ToolExecutionOutput("{}");
+        }
+    }
+
+    private sealed class SlowSensitiveTool : IWorkspaceTool
+    {
+        public const string Name = "test.slow-sensitive";
+        public ToolDefinition Definition { get; } = new(
+            Name, "test slow write", ToolRiskLevel.SensitiveWrite,
+            WorkspaceRole.Admin, RequiresApproval: true,
+            MinimumApproverRole: WorkspaceRole.Admin,
+            [new ToolArgumentDefinition(
+                "text", ToolArgumentType.String, Required: true, MaxLength: 50)]);
+        public ToolArgumentValidationResult ValidateArguments(JsonElement arguments) =>
+            ValidateText(arguments);
+
+        public async Task<ToolExecutionOutput> ExecuteAsync(
+            ToolExecutionContext context,
+            JsonElement arguments,
+            CancellationToken cancellationToken = default)
+        {
+            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+            return new ToolExecutionOutput("{}");
         }
     }
 

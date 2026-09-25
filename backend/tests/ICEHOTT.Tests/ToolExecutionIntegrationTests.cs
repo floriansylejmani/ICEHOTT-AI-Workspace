@@ -179,6 +179,12 @@ public sealed class ToolExecutionIntegrationTests
         Assert.DoesNotContain(due, x => x.Id == active.Id);
         Assert.DoesNotContain(due, x => x.Id == completed.Id);
 
+        var cancellation = await scope.ServiceProvider
+            .GetRequiredService<ICEHOTT.Application.Tools.ToolExecutionService>()
+            .CancelAsync(identity.UserId, workspaceId, active.Id);
+        Assert.Equal("execution_running", cancellation.ErrorCode);
+        Assert.Equal(ToolExecutionStatus.Running, active.Status);
+
         var recovery = scope.ServiceProvider.GetRequiredService<
             ICEHOTT.Application.Tools.ToolExecutionRecoveryService>();
         Assert.Equal(2, await recovery.RecoverExpiredAsync(now));
@@ -197,6 +203,71 @@ public sealed class ToolExecutionIntegrationTests
             Assert.Equal(ToolExecutionAuditEventType.OutcomeUnknown, x.EventType);
             Assert.Null(x.ActorUserId);
         });
+    }
+
+    [Fact]
+    public async Task Requester_Can_Cancel_Pending_Write_Without_Handler_Side_Effect()
+    {
+        using var owner = _factory.CreateClient();
+        var identity = await RegisterAsync(
+            owner,
+            $"cancel-owner-{Guid.NewGuid():N}@icehott.dev",
+            "Cancel Owner");
+        Authenticate(owner, identity.Token);
+        var workspaceId = await CreateWorkspaceAsync(owner, "Cancel Workspace");
+
+        var requested = await owner.PostAsJsonAsync(
+            $"/api/workspaces/{workspaceId}/tool-executions",
+            new
+            {
+                toolName = "workspace.audit-note.create",
+                arguments = new { message = "must not be written" },
+                idempotencyKey = $"cancel-{Guid.NewGuid():N}"
+            });
+        requested.EnsureSuccessStatusCode();
+        using var requestJson = JsonDocument.Parse(
+            await requested.Content.ReadAsStringAsync());
+        var executionId = requestJson.RootElement.GetProperty("id").GetGuid();
+
+        using var member = _factory.CreateClient();
+        var other = await RegisterAsync(member,
+            $"cancel-member-{Guid.NewGuid():N}@icehott.dev", "Cancel Member");
+        Authenticate(member, other.Token);
+        await AddMembershipAsync(workspaceId, other.UserId, WorkspaceRole.Member);
+        var forbidden = await member.PostAsync(
+            $"/api/workspaces/{workspaceId}/tool-executions/{executionId}/cancel",
+            null);
+        Assert.Equal(HttpStatusCode.NotFound, forbidden.StatusCode);
+
+        var otherWorkspaceId = await CreateWorkspaceAsync(member, "Other Workspace");
+        var crossing = await owner.PostAsync(
+            $"/api/workspaces/{otherWorkspaceId}/tool-executions/{executionId}/cancel",
+            null);
+        Assert.Equal(HttpStatusCode.NotFound, crossing.StatusCode);
+
+        var cancelled = await owner.PostAsync(
+            $"/api/workspaces/{workspaceId}/tool-executions/{executionId}/cancel",
+            null);
+        Assert.Equal(HttpStatusCode.OK, cancelled.StatusCode);
+        using var cancelledJson = JsonDocument.Parse(
+            await cancelled.Content.ReadAsStringAsync());
+        Assert.Equal("Cancelled",
+            cancelledJson.RootElement.GetProperty("status").GetString());
+
+        var repeated = await owner.PostAsync(
+            $"/api/workspaces/{workspaceId}/tool-executions/{executionId}/cancel",
+            null);
+        Assert.Equal(HttpStatusCode.Conflict, repeated.StatusCode);
+
+        using var scope = _factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<ICEHOTTDbContext>();
+        Assert.Equal(0, await db.WorkspaceAuditNotes.CountAsync(
+            x => x.WorkspaceId == workspaceId));
+        var events = await db.ToolExecutionAuditEvents
+            .Where(x => x.ExecutionId == executionId)
+            .ToListAsync();
+        Assert.Equal(1, events.Count(
+            x => x.EventType == ToolExecutionAuditEventType.Cancelled));
     }
 
     [Fact]

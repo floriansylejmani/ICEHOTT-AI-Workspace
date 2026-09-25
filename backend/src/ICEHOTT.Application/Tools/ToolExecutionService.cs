@@ -12,13 +12,21 @@ public sealed class ToolExecutionService(
     IToolExecutionRepository executions,
     IToolPolicyRepository policies,
     IToolRegistry registry,
-    TimeProvider clock)
+    TimeProvider clock,
+    TimeSpan? handlerTimeout = null)
 {
     /// <summary>
     /// Upper bound on the canonical JSON persisted per execution. Per-tool
     /// schemas are far smaller; this is a backstop for future tools.
     /// </summary>
     public const int MaxArgumentsBytes = 16 * 1024;
+    private readonly TimeSpan _handlerTimeout =
+        handlerTimeout is null
+            ? TimeSpan.FromSeconds(30)
+            : handlerTimeout > TimeSpan.Zero &&
+              handlerTimeout <= TimeSpan.FromMinutes(5)
+                ? handlerTimeout.Value
+                : throw new ArgumentOutOfRangeException(nameof(handlerTimeout));
 
     public async Task<ToolOperationResult<IReadOnlyList<ToolDefinitionView>>> ListToolsAsync(
         Guid userId,
@@ -446,6 +454,43 @@ public sealed class ToolExecutionService(
             null);
     }
 
+    public async Task<ToolOperationResult<ToolExecutionView>> CancelAsync(
+        Guid userId,
+        Guid workspaceId,
+        Guid executionId,
+        CancellationToken cancellationToken = default)
+    {
+        var membership = await workspaces.FindMembershipAsync(
+            userId, workspaceId, cancellationToken);
+        if (membership is null)
+            return new(null, "workspace_not_found");
+
+        var execution = await executions.FindAsync(
+            workspaceId, executionId, cancellationToken);
+        if (execution is null ||
+            (execution.RequestedByUserId != userId &&
+             membership.Role < WorkspaceRole.Owner))
+            return new(null, "execution_not_found");
+
+        if (execution.Status == ToolExecutionStatus.Running)
+            return new(null, "execution_running");
+        if (execution.Status is not (
+            ToolExecutionStatus.PendingApproval or ToolExecutionStatus.Ready))
+            return new(null, "invalid_state");
+
+        var now = clock.GetUtcNow();
+        execution.Cancel(now);
+        await executions.AddAuditEventAsync(
+            Audit(execution, ToolExecutionAuditEventType.Cancelled, userId, now),
+            cancellationToken);
+
+        if (await executions.SaveChangesAsync(cancellationToken) !=
+            ToolPersistenceOutcome.Saved)
+            return new(null, "invalid_state");
+
+        return new(await MapExecutionAsync(execution, cancellationToken), null);
+    }
+
     private async Task<ToolOperationResult<ToolExecutionView>> ExecuteReadyAsync(
         ToolExecution execution,
         IWorkspaceTool tool,
@@ -457,8 +502,8 @@ public sealed class ToolExecutionService(
         execution.Start(
             startedAt,
             Guid.NewGuid(),
-            startedAt.AddSeconds(30),
-            startedAt.AddSeconds(45));
+            startedAt.Add(_handlerTimeout),
+            startedAt.Add(_handlerTimeout).AddSeconds(15));
         await executions.AddAuditEventAsync(
             Audit(
                 execution,
@@ -474,6 +519,9 @@ public sealed class ToolExecutionService(
             return new(null, "invalid_state");
 
         ToolExecutionOutput output;
+        using var timeoutSource = CancellationTokenSource.CreateLinkedTokenSource(
+            cancellationToken);
+        timeoutSource.CancelAfter(_handlerTimeout);
         try
         {
             using var document = JsonDocument.Parse(
@@ -485,26 +533,56 @@ public sealed class ToolExecutionService(
                     execution.Id,
                     startedAt),
                 document.RootElement.Clone(),
-                cancellationToken);
+                timeoutSource.Token);
+        }
+        catch (OperationCanceledException)
+            when (!cancellationToken.IsCancellationRequested &&
+                  timeoutSource.IsCancellationRequested)
+        {
+            executions.DiscardPendingSideEffects(execution);
+            var timedOutAt = clock.GetUtcNow();
+            // ReadOnly tools have no write side effect. For writes the result
+            // may already have escaped the process, so retain uncertainty.
+            var eventType = execution.RiskLevel == ToolRiskLevel.ReadOnly
+                ? ToolExecutionAuditEventType.TimedOut
+                : ToolExecutionAuditEventType.OutcomeUnknown;
+            if (eventType == ToolExecutionAuditEventType.TimedOut)
+                execution.TimeOut(timedOutAt);
+            else
+                execution.MarkOutcomeUnknown(timedOutAt);
+            await executions.AddAuditEventAsync(
+                Audit(execution, eventType, null, timedOutAt),
+                CancellationToken.None);
+            if (await executions.SaveChangesAsync(CancellationToken.None) !=
+                ToolPersistenceOutcome.Saved)
+                return new(null, "invalid_state");
+            return new(
+                await MapExecutionAsync(execution, CancellationToken.None),
+                "tool_timeout");
         }
         catch (OperationCanceledException)
             when (cancellationToken.IsCancellationRequested)
         {
             executions.DiscardPendingSideEffects(execution);
             var cancelledAt = clock.GetUtcNow();
-            execution.Fail(
-                "tool_cancelled",
-                "Tool execution was cancelled.",
-                cancelledAt);
+            var uncertainWrite = execution.RiskLevel == ToolRiskLevel.SensitiveWrite;
+            if (uncertainWrite)
+                execution.MarkOutcomeUnknown(cancelledAt);
+            else
+                execution.Fail(
+                    "tool_cancelled",
+                    "Tool execution was cancelled.",
+                    cancelledAt);
             await executions.AddAuditEventAsync(
                 Audit(
                     execution,
-                    ToolExecutionAuditEventType.Failed,
-                    execution.RequestedByUserId,
+                    uncertainWrite
+                        ? ToolExecutionAuditEventType.OutcomeUnknown
+                        : ToolExecutionAuditEventType.Failed,
+                    null,
                     cancelledAt),
                 CancellationToken.None);
-            await executions.SaveChangesAsync(
-                CancellationToken.None);
+            await executions.SaveChangesAsync(CancellationToken.None);
             throw;
         }
         catch
