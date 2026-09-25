@@ -44,6 +44,10 @@ if (!builder.Environment.IsDevelopment() && allowedOrigins.Length == 0)
     throw new InvalidOperationException("Cors:AllowedOrigins must be configured outside Development.");
 
 var autoMigrate = builder.Configuration.GetValue<bool>("Database:AutoMigrate");
+var authRateLimitPermit = Math.Clamp(
+    builder.Configuration.GetValue<int?>("RateLimiting:AuthPermitLimit") ?? 10,
+    1,
+    1000);
 var knowledgeWorker = builder.Configuration
     .GetSection(KnowledgeWorkerOptions.SectionName)
     .Get<KnowledgeWorkerOptions>() ?? new KnowledgeWorkerOptions();
@@ -156,7 +160,7 @@ builder.Services.AddRateLimiter(options =>
             httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown",
             _ => new FixedWindowRateLimiterOptions
             {
-                PermitLimit = 10,
+                PermitLimit = authRateLimitPermit,
                 Window = TimeSpan.FromMinutes(1),
                 QueueLimit = 0,
                 AutoReplenishment = true

@@ -108,6 +108,8 @@
 - Sensitive writes persist as `PendingApproval`.
 - Sensitive writes require an authorized Admin/Owner approver who is different from the requester.
 - Self-approval and under-privileged approval are rejected server-side.
+- Requester membership and minimum requester role are revalidated at approval time so a revoked or demoted request cannot later execute.
+- Tool execution reads are permission-filtered; callers cannot inspect arguments/results for tools above their current workspace role unless they are the original requester.
 
 ### Replay and audit baseline
 - Tool requests require an idempotency key.

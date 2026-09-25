@@ -138,10 +138,12 @@ public sealed class ToolExecutionService(
         int limit = 50,
         CancellationToken cancellationToken = default)
     {
-        if (await workspaces.FindMembershipAsync(
-                userId,
-                workspaceId,
-                cancellationToken) is null)
+        var membership = await workspaces.FindMembershipAsync(
+            userId,
+            workspaceId,
+            cancellationToken);
+
+        if (membership is null)
             return new(null, "workspace_not_found");
 
         var items = await executions.ListAsync(
@@ -149,8 +151,15 @@ public sealed class ToolExecutionService(
             Math.Clamp(limit, 1, 100),
             cancellationToken);
 
-        var views = new List<ToolExecutionView>(items.Count);
-        foreach (var item in items)
+        var visibleItems = items
+            .Where(item => CanViewExecution(
+                membership.Role,
+                userId,
+                item))
+            .ToArray();
+
+        var views = new List<ToolExecutionView>(visibleItems.Length);
+        foreach (var item in visibleItems)
             views.Add(await MapExecutionAsync(item, cancellationToken));
 
         return new(views, null);
@@ -162,10 +171,12 @@ public sealed class ToolExecutionService(
         Guid executionId,
         CancellationToken cancellationToken = default)
     {
-        if (await workspaces.FindMembershipAsync(
-                userId,
-                workspaceId,
-                cancellationToken) is null)
+        var membership = await workspaces.FindMembershipAsync(
+            userId,
+            workspaceId,
+            cancellationToken);
+
+        if (membership is null)
             return new(null, "workspace_not_found");
 
         var execution = await executions.FindAsync(
@@ -173,11 +184,16 @@ public sealed class ToolExecutionService(
             executionId,
             cancellationToken);
 
-        return execution is null
-            ? new(null, "execution_not_found")
-            : new(
-                await MapExecutionAsync(execution, cancellationToken),
-                null);
+        if (execution is null ||
+            !CanViewExecution(
+                membership.Role,
+                userId,
+                execution))
+            return new(null, "execution_not_found");
+
+        return new(
+            await MapExecutionAsync(execution, cancellationToken),
+            null);
     }
 
     public async Task<ToolOperationResult<ToolExecutionView>> ApproveAsync(
@@ -220,6 +236,15 @@ public sealed class ToolExecutionService(
 
         if (execution.Status != ToolExecutionStatus.PendingApproval)
             return new(null, "invalid_state");
+
+        var requesterMembership = await workspaces.FindMembershipAsync(
+            execution.RequestedByUserId,
+            workspaceId,
+            cancellationToken);
+
+        if (requesterMembership is null ||
+            requesterMembership.Role < tool.Definition.MinimumRequesterRole)
+            return new(null, "requester_no_longer_authorized");
 
         var now = clock.GetUtcNow();
         execution.Approve(approverUserId, now);
@@ -425,6 +450,19 @@ public sealed class ToolExecutionService(
                 x.EventType,
                 x.ActorUserId,
                 x.OccurredAtUtc)).ToArray());
+    }
+
+    private bool CanViewExecution(
+        WorkspaceRole callerRole,
+        Guid callerUserId,
+        ToolExecution execution)
+    {
+        if (execution.RequestedByUserId == callerUserId)
+            return true;
+
+        var tool = registry.Find(execution.ToolName);
+        return tool is not null &&
+               callerRole >= tool.Definition.MinimumRequesterRole;
     }
 
     private static ToolDefinitionView Map(ToolDefinition definition) =>

@@ -138,7 +138,8 @@ public sealed class ToolsController(
                     payload),
 
             "idempotency_conflict" or
-            "invalid_state" =>
+            "invalid_state" or
+            "requester_no_longer_authorized" =>
                 Conflict(payload),
 
             "tool_execution_failed" =>

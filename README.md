@@ -108,6 +108,8 @@ ICEHOTT is a production-oriented AI workspace for agentic work: knowledge, tools
 - Workspace role checks before every tool request, read, approval, rejection, or execution
 - `ReadOnly` and `SensitiveWrite` risk classes
 - Sensitive writes persist as `PendingApproval` and require a different Admin/Owner approver
+- Requester permission is revalidated at approval time so revoked/demoted requests cannot execute
+- Execution reads are role-filtered so Member users cannot inspect Admin-only tool arguments/results
 - Canonical JSON argument hashing plus workspace/tool-scoped idempotency keys
 - Persisted execution state machine and result JSON
 - Append-only application audit events for Requested/Approved/Rejected/Started/Succeeded/Failed transitions

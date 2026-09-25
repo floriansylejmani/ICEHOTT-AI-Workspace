@@ -438,6 +438,371 @@ public sealed class ToolExecutionIntegrationTests
         Assert.Equal(
             HttpStatusCode.BadRequest,
             wrongType.StatusCode);
+
+        var oversized = await owner.PostAsJsonAsync(
+            $"/api/workspaces/{workspaceId}/tool-executions",
+            new
+            {
+                toolName = "workspace.echo",
+                arguments = new { text = new string('x', 501) },
+                idempotencyKey = $"oversized-{Guid.NewGuid():N}"
+            });
+
+        Assert.Equal(
+            HttpStatusCode.BadRequest,
+            oversized.StatusCode);
+
+        var unknown = await owner.PostAsJsonAsync(
+            $"/api/workspaces/{workspaceId}/tool-executions",
+            new
+            {
+                toolName = "workspace.shell",
+                arguments = new { command = "whoami" },
+                idempotencyKey = $"unknown-{Guid.NewGuid():N}"
+            });
+
+        Assert.Equal(
+            HttpStatusCode.NotFound,
+            unknown.StatusCode);
+
+        var badKey = await owner.PostAsJsonAsync(
+            $"/api/workspaces/{workspaceId}/tool-executions",
+            new
+            {
+                toolName = "workspace.echo",
+                arguments = new { text = "hello" },
+                idempotencyKey = "short"
+            });
+
+        Assert.Equal(
+            HttpStatusCode.BadRequest,
+            badKey.StatusCode);
+    }
+
+    [Fact]
+    public async Task Member_Cannot_Read_Sensitive_Execution_Requested_By_Admin()
+    {
+        using var owner = _factory.CreateClient();
+        var ownerIdentity = await RegisterAsync(
+            owner,
+            $"visibility-owner-{Guid.NewGuid():N}@icehott.dev",
+            "Visibility Owner");
+        Authenticate(owner, ownerIdentity.Token);
+
+        var workspaceId = await CreateWorkspaceAsync(
+            owner,
+            "Visibility Workspace");
+
+        var request = await owner.PostAsJsonAsync(
+            $"/api/workspaces/{workspaceId}/tool-executions",
+            new
+            {
+                toolName = "workspace.audit-note.create",
+                arguments = new { message = "admin-only pending note" },
+                idempotencyKey = $"visibility-{Guid.NewGuid():N}"
+            });
+        request.EnsureSuccessStatusCode();
+
+        using var requestJson = JsonDocument.Parse(
+            await request.Content.ReadAsStringAsync());
+        var executionId = requestJson.RootElement
+            .GetProperty("id")
+            .GetGuid();
+
+        using var member = _factory.CreateClient();
+        var memberIdentity = await RegisterAsync(
+            member,
+            $"visibility-member-{Guid.NewGuid():N}@icehott.dev",
+            "Visibility Member");
+        Authenticate(member, memberIdentity.Token);
+        await AddMembershipAsync(
+            workspaceId,
+            memberIdentity.UserId,
+            WorkspaceRole.Member);
+
+        var get = await member.GetAsync(
+            $"/api/workspaces/{workspaceId}/tool-executions/{executionId}");
+        Assert.Equal(HttpStatusCode.NotFound, get.StatusCode);
+
+        var list = await member.GetAsync(
+            $"/api/workspaces/{workspaceId}/tool-executions");
+        list.EnsureSuccessStatusCode();
+
+        using var listJson = JsonDocument.Parse(
+            await list.Content.ReadAsStringAsync());
+        Assert.DoesNotContain(
+            listJson.RootElement.EnumerateArray(),
+            item => item.GetProperty("id").GetGuid() == executionId);
+    }
+
+    [Fact]
+    public async Task Approval_Rechecks_Requester_Current_Role()
+    {
+        using var owner = _factory.CreateClient();
+        var ownerIdentity = await RegisterAsync(
+            owner,
+            $"reauth-owner-{Guid.NewGuid():N}@icehott.dev",
+            "Reauth Owner");
+        Authenticate(owner, ownerIdentity.Token);
+
+        var workspaceId = await CreateWorkspaceAsync(
+            owner,
+            "Reauth Workspace");
+
+        using var requester = _factory.CreateClient();
+        var requesterIdentity = await RegisterAsync(
+            requester,
+            $"reauth-requester-{Guid.NewGuid():N}@icehott.dev",
+            "Reauth Requester");
+        Authenticate(requester, requesterIdentity.Token);
+        await AddMembershipAsync(
+            workspaceId,
+            requesterIdentity.UserId,
+            WorkspaceRole.Admin);
+
+        using var approver = _factory.CreateClient();
+        var approverIdentity = await RegisterAsync(
+            approver,
+            $"reauth-approver-{Guid.NewGuid():N}@icehott.dev",
+            "Reauth Approver");
+        Authenticate(approver, approverIdentity.Token);
+        await AddMembershipAsync(
+            workspaceId,
+            approverIdentity.UserId,
+            WorkspaceRole.Admin);
+
+        var request = await requester.PostAsJsonAsync(
+            $"/api/workspaces/{workspaceId}/tool-executions",
+            new
+            {
+                toolName = "workspace.audit-note.create",
+                arguments = new { message = "must not execute after demotion" },
+                idempotencyKey = $"reauth-{Guid.NewGuid():N}"
+            });
+        request.EnsureSuccessStatusCode();
+
+        using var requestJson = JsonDocument.Parse(
+            await request.Content.ReadAsStringAsync());
+        var executionId = requestJson.RootElement
+            .GetProperty("id")
+            .GetGuid();
+
+        await SetMembershipRoleAsync(
+            workspaceId,
+            requesterIdentity.UserId,
+            WorkspaceRole.Member);
+
+        var approval = await approver.PostAsync(
+            $"/api/workspaces/{workspaceId}/tool-executions/{executionId}/approve",
+            null);
+
+        Assert.Equal(HttpStatusCode.Conflict, approval.StatusCode);
+        using var approvalJson = JsonDocument.Parse(
+            await approval.Content.ReadAsStringAsync());
+        Assert.Equal(
+            "requester_no_longer_authorized",
+            approvalJson.RootElement.GetProperty("code").GetString());
+
+        using var scope = _factory.Services.CreateScope();
+        var db = scope.ServiceProvider
+            .GetRequiredService<ICEHOTTDbContext>();
+
+        var execution = await db.ToolExecutions
+            .AsNoTracking()
+            .SingleAsync(x => x.Id == executionId);
+        Assert.Equal(
+            ToolExecutionStatus.PendingApproval,
+            execution.Status);
+        Assert.False(
+            await db.WorkspaceAuditNotes.AnyAsync(
+                x => x.ToolExecutionId == executionId));
+    }
+
+    [Fact]
+    public async Task Idempotency_Key_Is_Scoped_Per_Workspace()
+    {
+        using var owner = _factory.CreateClient();
+        var identity = await RegisterAsync(
+            owner,
+            $"scope-owner-{Guid.NewGuid():N}@icehott.dev",
+            "Scope Owner");
+        Authenticate(owner, identity.Token);
+
+        var firstWorkspaceId = await CreateWorkspaceAsync(
+            owner,
+            "Scope Workspace A");
+        var secondWorkspaceId = await CreateWorkspaceAsync(
+            owner,
+            "Scope Workspace B");
+        var key = $"shared-{Guid.NewGuid():N}";
+
+        var first = await owner.PostAsJsonAsync(
+            $"/api/workspaces/{firstWorkspaceId}/tool-executions",
+            new
+            {
+                toolName = "workspace.echo",
+                arguments = new { text = "same" },
+                idempotencyKey = key
+            });
+        var second = await owner.PostAsJsonAsync(
+            $"/api/workspaces/{secondWorkspaceId}/tool-executions",
+            new
+            {
+                toolName = "workspace.echo",
+                arguments = new { text = "same" },
+                idempotencyKey = key
+            });
+
+        first.EnsureSuccessStatusCode();
+        second.EnsureSuccessStatusCode();
+
+        using var firstJson = JsonDocument.Parse(
+            await first.Content.ReadAsStringAsync());
+        using var secondJson = JsonDocument.Parse(
+            await second.Content.ReadAsStringAsync());
+
+        Assert.NotEqual(
+            firstJson.RootElement.GetProperty("id").GetGuid(),
+            secondJson.RootElement.GetProperty("id").GetGuid());
+    }
+
+    [Fact]
+    public async Task Approval_Cannot_Cross_Workspace_Boundary()
+    {
+        using var owner = _factory.CreateClient();
+        var ownerIdentity = await RegisterAsync(
+            owner,
+            $"cross-owner-{Guid.NewGuid():N}@icehott.dev",
+            "Cross Owner");
+        Authenticate(owner, ownerIdentity.Token);
+
+        var sourceWorkspaceId = await CreateWorkspaceAsync(
+            owner,
+            "Cross Source");
+        var otherWorkspaceId = await CreateWorkspaceAsync(
+            owner,
+            "Cross Other");
+
+        var request = await owner.PostAsJsonAsync(
+            $"/api/workspaces/{sourceWorkspaceId}/tool-executions",
+            new
+            {
+                toolName = "workspace.audit-note.create",
+                arguments = new { message = "source only" },
+                idempotencyKey = $"cross-{Guid.NewGuid():N}"
+            });
+        request.EnsureSuccessStatusCode();
+
+        using var requestJson = JsonDocument.Parse(
+            await request.Content.ReadAsStringAsync());
+        var executionId = requestJson.RootElement
+            .GetProperty("id")
+            .GetGuid();
+
+        using var otherAdmin = _factory.CreateClient();
+        var otherAdminIdentity = await RegisterAsync(
+            otherAdmin,
+            $"cross-admin-{Guid.NewGuid():N}@icehott.dev",
+            "Cross Admin");
+        Authenticate(otherAdmin, otherAdminIdentity.Token);
+        await AddMembershipAsync(
+            otherWorkspaceId,
+            otherAdminIdentity.UserId,
+            WorkspaceRole.Admin);
+
+        var approval = await otherAdmin.PostAsync(
+            $"/api/workspaces/{otherWorkspaceId}/tool-executions/{executionId}/approve",
+            null);
+
+        Assert.Equal(HttpStatusCode.NotFound, approval.StatusCode);
+    }
+
+    [Fact]
+    public async Task Failed_Handler_Persists_Safe_Failure_And_Audit_Trail()
+    {
+        using var owner = _factory.CreateClient();
+        var identity = await RegisterAsync(
+            owner,
+            $"failure-owner-{Guid.NewGuid():N}@icehott.dev",
+            "Failure Owner");
+        Authenticate(owner, identity.Token);
+
+        var workspaceId = await CreateWorkspaceAsync(
+            owner,
+            "Failure Workspace");
+
+        var response = await owner.PostAsJsonAsync(
+            $"/api/workspaces/{workspaceId}/tool-executions",
+            new
+            {
+                toolName = "test.failure",
+                arguments = new { },
+                idempotencyKey = $"failure-{Guid.NewGuid():N}"
+            });
+
+        Assert.Equal(
+            HttpStatusCode.InternalServerError,
+            response.StatusCode);
+
+        using var json = JsonDocument.Parse(
+            await response.Content.ReadAsStringAsync());
+        Assert.Equal(
+            "tool_execution_failed",
+            json.RootElement.GetProperty("code").GetString());
+
+        var execution = json.RootElement.GetProperty("execution");
+        var executionId = execution.GetProperty("id").GetGuid();
+
+        Assert.Equal(
+            "Failed",
+            execution.GetProperty("status").GetString());
+        Assert.Equal(
+            "tool_execution_failed",
+            execution.GetProperty("errorCode").GetString());
+        Assert.Equal(
+            "Tool execution failed.",
+            execution.GetProperty("errorMessage").GetString());
+
+        var fetched = await owner.GetAsync(
+            $"/api/workspaces/{workspaceId}/tool-executions/{executionId}");
+        fetched.EnsureSuccessStatusCode();
+
+        using var fetchedJson = JsonDocument.Parse(
+            await fetched.Content.ReadAsStringAsync());
+        Assert.Equal(
+            "Failed",
+            fetchedJson.RootElement.GetProperty("status").GetString());
+
+        var events = fetchedJson.RootElement
+            .GetProperty("auditEvents")
+            .EnumerateArray()
+            .Select(x => x.GetProperty("eventType").GetString()!)
+            .ToArray();
+
+        Assert.Equal(
+            ["Requested", "Started", "Failed"],
+            events);
+    }
+
+    private async Task SetMembershipRoleAsync(
+        Guid workspaceId,
+        Guid userId,
+        WorkspaceRole role)
+    {
+        using var scope = _factory.Services.CreateScope();
+        var db = scope.ServiceProvider
+            .GetRequiredService<ICEHOTTDbContext>();
+
+        var membership = await db.WorkspaceMemberships
+            .SingleAsync(x =>
+                x.WorkspaceId == workspaceId &&
+                x.UserId == userId);
+
+        db.Entry(membership)
+            .Property(x => x.Role)
+            .CurrentValue = role;
+
+        await db.SaveChangesAsync();
     }
 
     private async Task AddMembershipAsync(

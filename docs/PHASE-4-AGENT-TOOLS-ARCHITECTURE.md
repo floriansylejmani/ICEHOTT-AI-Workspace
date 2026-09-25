@@ -1,6 +1,6 @@
 # Phase 4 — Agent Tools & Execution Architecture
 
-Status: architecture frozen for implementation
+Status: implementation complete locally; final GitHub merge gate pending
 Base: `main@706fb0a`
 Branch: `phase-4-agent-tools-execution`
 
@@ -72,6 +72,7 @@ Approval invariants:
 - approver must belong to the same workspace;
 - approver must satisfy the tool's approval role;
 - requester cannot approve their own sensitive execution;
+- requester membership and minimum requester role are revalidated at approval time;
 - rejected executions cannot later be approved;
 - approval never comes from model output.
 
@@ -80,6 +81,8 @@ Approval invariants:
 Every execution row carries `WorkspaceId`.
 
 Every API operation first resolves the caller's membership in that exact workspace. Non-members receive the same not-found behavior used by the rest of ICEHOTT.
+
+Execution reads are additionally filtered by tool permission: a caller may view their own execution, or executions for tools their current workspace role is allowed to request. This prevents Member-level users from reading Admin-only tool arguments and results.
 
 Role ordering remains:
 
@@ -191,6 +194,29 @@ POST /api/workspaces/{workspaceId}/tool-executions/{executionId}/reject
 - frontend and AI regression suites remain green;
 - GitHub CI is green;
 - phase is merged to `main` and feature branch is cleaned up.
+
+## Validation evidence
+
+Local release-gate evidence:
+
+- backend Debug: 127/127 tests passed;
+- backend Release: 127/127 tests passed;
+- Phase 4 targeted tool suite: 14/14 passed;
+- frontend: 8/8 tests passed, ESLint passed, production build passed;
+- AI runtime: 5/5 pytest passed;
+- EF migrations applied from an empty PostgreSQL/pgvector database through `20260925181737_Phase4AgentToolsExecution`;
+- idempotent migration script generation passed;
+- Docker images `icehott-api` and `icehott-ai` built successfully;
+- live API + PostgreSQL smoke for `workspace.echo`: Succeeded with Requested/Started/Succeeded audit events;
+- staged secret scan and GitHub CI are required again for the final commit before merge.
+
+Additional security regressions now cover:
+
+- Member users cannot read Admin-only sensitive execution details;
+- requester permission is revalidated before a sensitive approval can execute;
+- idempotency keys are scoped independently per workspace;
+- approval cannot cross workspace boundaries;
+- unknown tools, wrong types, oversized arguments, unknown properties, and invalid idempotency keys are rejected.
 
 ## Deferred to Phase 4.5
 
