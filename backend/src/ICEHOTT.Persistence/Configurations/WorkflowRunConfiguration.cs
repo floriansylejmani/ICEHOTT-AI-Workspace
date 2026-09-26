@@ -43,6 +43,13 @@ public sealed class WorkflowRunConfiguration
 
         builder.HasIndex(x => new
         {
+            x.Status,
+            x.CancellationRequestedAtUtc,
+            x.LeaseExpiresAtUtc
+        });
+
+        builder.HasIndex(x => new
+        {
             x.WorkspaceId,
             x.WorkflowDefinitionId,
             x.IdempotencyKey
@@ -86,6 +93,10 @@ public sealed class WorkflowRunConfiguration
 
         builder.HasOne<User>().WithMany()
             .HasForeignKey(x => x.RunAsUserId)
+            .OnDelete(DeleteBehavior.Restrict);
+
+        builder.HasOne<User>().WithMany()
+            .HasForeignKey(x => x.CancellationRequestedByUserId)
             .OnDelete(DeleteBehavior.Restrict);
     }
 }

@@ -2,11 +2,13 @@ using System.Text;
 using System.Text.Json.Serialization;
 using System.Threading.RateLimiting;
 using ICEHOTT.API.Background;
+using ICEHOTT.API.Services;
 using ICEHOTT.Application.Abstractions;
 using ICEHOTT.Application.Agents;
 using ICEHOTT.Application.Auth;
 using ICEHOTT.Application.Knowledge;
 using ICEHOTT.Application.Tools;
+using ICEHOTT.Application.Workflows;
 using ICEHOTT.Application.Workspaces;
 using ICEHOTT.Infrastructure.Ai;
 using ICEHOTT.Infrastructure.Documents;
@@ -63,6 +65,7 @@ builder.Services.AddOpenApi();
 builder.Services.AddHealthChecks();
 builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.Configure<JwtOptions>(builder.Configuration.GetSection(JwtOptions.SectionName));
+builder.Services.Configure<WorkflowRunnerOptions>(builder.Configuration.GetSection(WorkflowRunnerOptions.SectionName));
 builder.Services.Configure<AiRuntimeOptions>(builder.Configuration.GetSection(AiRuntimeOptions.SectionName));
 builder.Services.Configure<OpenAiEmbeddingOptions>(
     builder.Configuration.GetSection(OpenAiEmbeddingOptions.SectionName));
@@ -80,6 +83,7 @@ builder.Services.AddScoped<IToolExecutionRepository, ToolExecutionRepository>();
 builder.Services.AddScoped<IToolPolicyRepository, ToolPolicyRepository>();
 builder.Services.AddScoped<IWorkspaceAuditNoteRepository, WorkspaceAuditNoteRepository>();
 builder.Services.AddScoped<IWorkflowRepository, WorkflowRepository>();
+builder.Services.AddScoped<IWorkflowRunQueue, WorkflowRunQueue>();
 builder.Services.AddScoped<IArtifactRepository, ArtifactRepository>();
 builder.Services.AddScoped<IWorkflowAuditRepository, WorkflowAuditRepository>();
 builder.Services.AddScoped<IVectorStore, PostgresVectorStore>();
@@ -139,6 +143,8 @@ builder.Services.AddSingleton(toolQuotas);
 builder.Services.AddSingleton<IToolOperationalLog, ToolOperationalLog>();
 builder.Services.AddScoped<ToolExecutionService>();
 builder.Services.AddScoped<ToolExecutionRecoveryService>();
+builder.Services.AddScoped<WorkflowRunProcessor>();
+builder.Services.AddSingleton<IWorkflowToolInvoker, WorkflowToolInvoker>();
 builder.Services.AddScoped<ToolPolicyService>();
 
 var promotionRequirements = RagPromotionRequirements.ProviderBenchmarkDefault with
@@ -152,6 +158,7 @@ builder.Services.AddSingleton<RagPromotionPolicy>();
 if (knowledgeWorker.Enabled)
     builder.Services.AddHostedService<KnowledgeIngestionWorker>();
 builder.Services.AddHostedService<ToolExecutionRecoveryWorker>();
+builder.Services.AddHostedService<WorkflowRunnerWorker>();
 
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer(options => options.TokenValidationParameters = new TokenValidationParameters

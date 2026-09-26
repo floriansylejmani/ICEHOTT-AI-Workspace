@@ -3,6 +3,7 @@ using System;
 using ICEHOTT.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 
@@ -11,9 +12,11 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace ICEHOTT.Persistence.Migrations
 {
     [DbContext(typeof(ICEHOTTDbContext))]
-    partial class ICEHOTTDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260926154306_Phase5CDurableRunner")]
+    partial class Phase5CDurableRunner
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder

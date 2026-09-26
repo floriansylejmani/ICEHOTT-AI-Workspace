@@ -54,6 +54,12 @@ public interface IWorkflowRepository
         Guid runId,
         CancellationToken cancellationToken = default);
 
+    Task<WorkflowStepRun?> FindLatestStepRunAsync(
+        Guid workspaceId,
+        Guid runId,
+        string stepKey,
+        CancellationToken cancellationToken = default);
+
     Task AddCheckpointAsync(
         WorkflowCheckpoint checkpoint,
         CancellationToken cancellationToken = default);
@@ -61,6 +67,11 @@ public interface IWorkflowRepository
     Task<WorkflowCheckpoint?> FindCheckpointAsync(
         Guid workspaceId,
         Guid checkpointId,
+        CancellationToken cancellationToken = default);
+
+    Task<WorkflowCheckpoint?> FindCheckpointByStepRunAsync(
+        Guid workspaceId,
+        Guid stepRunId,
         CancellationToken cancellationToken = default);
 
     Task AddTriggerAsync(

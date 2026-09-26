@@ -29,7 +29,8 @@ public enum WorkflowWaitReason
 {
     Checkpoint = 1,
     Delay = 2,
-    RetryBackoff = 3
+    RetryBackoff = 3,
+    ToolExecution = 4
 }
 
 public enum WorkflowStepType
@@ -49,11 +50,12 @@ public enum WorkflowStepRunStatus
     WaitingForCheckpoint = 4,
     WaitingForDelay = 5,
     WaitingForRetry = 6,
-    Succeeded = 7,
-    Failed = 8,
-    Cancelled = 9,
-    Skipped = 10,
-    OutcomeUnknown = 11
+    WaitingForTool = 7,
+    Succeeded = 8,
+    Failed = 9,
+    Cancelled = 10,
+    Skipped = 11,
+    OutcomeUnknown = 12
 }
 
 public enum WorkflowCheckpointStatus

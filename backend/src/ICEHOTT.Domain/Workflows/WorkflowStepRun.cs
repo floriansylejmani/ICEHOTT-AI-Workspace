@@ -76,9 +76,31 @@ public sealed class WorkflowStepRun
         NextAttemptAtUtc = resumeAtUtc;
     }
 
-    public void WaitForRetry(DateTimeOffset retryAtUtc, string errorCode, string? errorMessage)
+    public void WaitForTool(Guid toolExecutionId)
     {
         RequireRunning();
+        if (toolExecutionId == Guid.Empty)
+            throw new ArgumentException("Tool execution ID is required.", nameof(toolExecutionId));
+
+        ToolExecutionId = toolExecutionId;
+        Status = WorkflowStepRunStatus.WaitingForTool;
+    }
+
+    public void AttachToolExecution(Guid toolExecutionId)
+    {
+        RequireRunning();
+        if (toolExecutionId == Guid.Empty)
+            throw new ArgumentException("Tool execution ID is required.", nameof(toolExecutionId));
+        if (ToolExecutionId is not null && ToolExecutionId != toolExecutionId)
+            throw new InvalidOperationException("Workflow step is already linked to another tool execution.");
+
+        ToolExecutionId = toolExecutionId;
+    }
+
+    public void WaitForRetry(DateTimeOffset retryAtUtc, string errorCode, string? errorMessage)
+    {
+        if (Status is not (WorkflowStepRunStatus.Running or WorkflowStepRunStatus.WaitingForTool))
+            throw new InvalidOperationException("Only active workflow steps can wait for retry.");
         if (string.IsNullOrWhiteSpace(errorCode))
             throw new ArgumentException("Error code is required.", nameof(errorCode));
 
@@ -90,7 +112,7 @@ public sealed class WorkflowStepRun
 
     public void Succeed(string? outputJson, DateTimeOffset completedAtUtc)
     {
-        if (Status is not (WorkflowStepRunStatus.Running or WorkflowStepRunStatus.WaitingForCheckpoint or WorkflowStepRunStatus.WaitingForDelay))
+        if (Status is not (WorkflowStepRunStatus.Running or WorkflowStepRunStatus.WaitingForCheckpoint or WorkflowStepRunStatus.WaitingForDelay or WorkflowStepRunStatus.WaitingForTool))
             throw new InvalidOperationException("Only active workflow steps can succeed.");
 
         Status = WorkflowStepRunStatus.Succeeded;
@@ -115,6 +137,16 @@ public sealed class WorkflowStepRun
         ErrorMessage = string.IsNullOrWhiteSpace(errorMessage) ? null : errorMessage.Trim();
     }
 
+    public void CloseForRetry(DateTimeOffset completedAtUtc)
+    {
+        if (Status != WorkflowStepRunStatus.WaitingForRetry)
+            throw new InvalidOperationException("Only retry-waiting workflow steps can close for retry.");
+
+        Status = WorkflowStepRunStatus.Failed;
+        CompletedAtUtc = completedAtUtc;
+        NextAttemptAtUtc = null;
+    }
+
     public void Cancel(DateTimeOffset completedAtUtc)
     {
         if (Status is WorkflowStepRunStatus.Succeeded or WorkflowStepRunStatus.Failed or WorkflowStepRunStatus.Cancelled or WorkflowStepRunStatus.Skipped or WorkflowStepRunStatus.OutcomeUnknown)
@@ -136,7 +168,9 @@ public sealed class WorkflowStepRun
 
     public void MarkOutcomeUnknown(string? errorMessage, DateTimeOffset completedAtUtc)
     {
-        RequireRunning();
+        if (Status is not (WorkflowStepRunStatus.Running or WorkflowStepRunStatus.WaitingForTool))
+            throw new InvalidOperationException("Only active tool workflow steps can have an unknown outcome.");
+
         Status = WorkflowStepRunStatus.OutcomeUnknown;
         CompletedAtUtc = completedAtUtc;
         ErrorCode = "workflow_step_outcome_unknown";

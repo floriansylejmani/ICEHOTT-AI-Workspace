@@ -52,6 +52,8 @@ public sealed class WorkflowRun
     public DateTimeOffset? ResumeAtUtc { get; private set; }
     public string? ErrorCode { get; private set; }
     public string? ErrorMessage { get; private set; }
+    public Guid? CancellationRequestedByUserId { get; private set; }
+    public DateTimeOffset? CancellationRequestedAtUtc { get; private set; }
 
     public void Start(string? currentStepKey, DateTimeOffset startedAtUtc)
     {
@@ -76,11 +78,20 @@ public sealed class WorkflowRun
         return LeaseGeneration;
     }
 
+    public void SetCurrentStep(string? stepKey)
+    {
+        if (Status != WorkflowRunStatus.Running)
+            throw new InvalidOperationException("Only running workflow runs can change the current step.");
+
+        CurrentStepKey = string.IsNullOrWhiteSpace(stepKey) ? null : stepKey.Trim();
+    }
+
     public void Wait(WorkflowWaitReason reason, DateTimeOffset? resumeAtUtc = null)
     {
         if (Status != WorkflowRunStatus.Running)
             throw new InvalidOperationException("Only running workflow runs can wait.");
-        if (reason != WorkflowWaitReason.Checkpoint && resumeAtUtc is null)
+        if (reason is WorkflowWaitReason.Delay or WorkflowWaitReason.RetryBackoff &&
+            resumeAtUtc is null)
             throw new ArgumentException("Delay and retry waits require a resume time.", nameof(resumeAtUtc));
 
         Status = WorkflowRunStatus.Waiting;
@@ -127,6 +138,17 @@ public sealed class WorkflowRun
         WaitReason = null;
         ResumeAtUtc = null;
         ClearLease();
+    }
+
+    public void RequestCancellation(Guid actorUserId, DateTimeOffset requestedAtUtc)
+    {
+        if (actorUserId == Guid.Empty)
+            throw new ArgumentException("Cancellation actor ID is required.", nameof(actorUserId));
+        if (Status is WorkflowRunStatus.Succeeded or WorkflowRunStatus.Failed or WorkflowRunStatus.Cancelled or WorkflowRunStatus.OutcomeUnknown)
+            throw new InvalidOperationException("Terminal workflow run cannot be cancelled.");
+
+        CancellationRequestedByUserId ??= actorUserId;
+        CancellationRequestedAtUtc ??= requestedAtUtc;
     }
 
     public void Cancel(DateTimeOffset completedAtUtc)

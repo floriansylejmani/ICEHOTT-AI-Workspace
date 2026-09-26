@@ -117,6 +117,18 @@ public sealed class WorkflowRepository(ICEHOTTDbContext db) : IWorkflowRepositor
             .ToArray();
     }
 
+    public Task<WorkflowStepRun?> FindLatestStepRunAsync(
+        Guid workspaceId,
+        Guid runId,
+        string stepKey,
+        CancellationToken cancellationToken = default) =>
+        db.WorkflowStepRuns
+            .Where(x => x.WorkspaceId == workspaceId &&
+                        x.WorkflowRunId == runId &&
+                        x.StepKey == stepKey)
+            .OrderByDescending(x => x.Attempt)
+            .FirstOrDefaultAsync(cancellationToken);
+
     public Task AddCheckpointAsync(
         WorkflowCheckpoint checkpoint,
         CancellationToken cancellationToken = default) =>
@@ -128,6 +140,14 @@ public sealed class WorkflowRepository(ICEHOTTDbContext db) : IWorkflowRepositor
         CancellationToken cancellationToken = default) =>
         db.WorkflowCheckpoints.SingleOrDefaultAsync(
             x => x.WorkspaceId == workspaceId && x.Id == checkpointId,
+            cancellationToken);
+
+    public Task<WorkflowCheckpoint?> FindCheckpointByStepRunAsync(
+        Guid workspaceId,
+        Guid stepRunId,
+        CancellationToken cancellationToken = default) =>
+        db.WorkflowCheckpoints.SingleOrDefaultAsync(
+            x => x.WorkspaceId == workspaceId && x.StepRunId == stepRunId,
             cancellationToken);
 
     public Task AddTriggerAsync(

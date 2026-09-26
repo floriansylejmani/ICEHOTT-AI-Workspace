@@ -139,7 +139,16 @@ ICEHOTT is a production-oriented AI workspace for agentic work: knowledge, tools
 - PostgreSQL migration validated from clean DB, Phase 4.5 upgrade, rollback/reapply, and idempotent script replay
 - Full backend Debug and Release suites: 406/406 passing with PostgreSQL integration tests enabled
 
-**Next:** Phase 5C — Durable Runner & Recovery.
+### Phase 5C — Durable Runner & Recovery
+- PostgreSQL run queue with `FOR UPDATE SKIP LOCKED`, lease expiry, heartbeat, and monotonic fencing generations
+- Durable delay/retry/cancellation state plus restart-safe reclaim
+- Run-as membership revalidation before each new step
+- Stable workflow tool idempotency and Phase 4.5-preserving child-scope tool invocation
+- `OutcomeUnknown` propagation without blind replay of uncertain sensitive side effects
+- Hosted workflow runner with real restart-recovery smoke evidence
+- Full backend Debug and Release suites: 426/426 passing with PostgreSQL integration tests enabled
+
+**Next:** Phase 5D — Artifacts & File Storage.
 
 ## Architecture
 
