@@ -107,5 +107,10 @@ public enum WorkflowAuditEventType
     RunSucceeded = 16,
     RunFailed = 17,
     OutcomeUnknown = 18,
-    TriggerFired = 19
+    TriggerFired = 19,
+    TriggerCreated = 20,
+    TriggerEnabled = 21,
+    TriggerDisabled = 22,
+    TriggerFireFailed = 23,
+    TriggerSkipped = 24
 }

@@ -247,6 +247,109 @@ public sealed class WorkflowRepository(ICEHOTTDbContext db) : IWorkflowRepositor
         return items.OrderBy(x => x.CreatedAtUtc).ToArray();
     }
 
+    public async Task<WorkflowTriggerAdministrationPersistenceOutcome> SaveTriggerAdministrationAsync(
+        Guid workspaceId,
+        Guid actorUserId,
+        Guid? runAsUserId,
+        WorkspaceRole? minimumRunRole,
+        bool enforceActiveQuota,
+        int maxActiveTriggersPerWorkspace,
+        CancellationToken cancellationToken = default)
+    {
+        await using var transaction =
+            await db.Database.BeginTransactionAsync(cancellationToken);
+
+        if (db.Database.IsNpgsql())
+        {
+            var workspace = await db.Workspaces
+                .FromSqlInterpolated(
+                    $"SELECT * FROM workspaces WHERE \"Id\" = {workspaceId} FOR UPDATE")
+                .AsNoTracking()
+                .SingleOrDefaultAsync(cancellationToken);
+
+            if (workspace is null)
+            {
+                db.ChangeTracker.Clear();
+                await transaction.RollbackAsync(CancellationToken.None);
+                return WorkflowTriggerAdministrationPersistenceOutcome.ActorAuthorizationConflict;
+            }
+        }
+
+        var actorQuery = db.Database.IsNpgsql()
+            ? db.WorkspaceMemberships.FromSqlInterpolated(
+                $"SELECT * FROM workspace_memberships WHERE \"WorkspaceId\" = {workspaceId} AND \"UserId\" = {actorUserId} FOR SHARE")
+            : db.WorkspaceMemberships.Where(x =>
+                x.WorkspaceId == workspaceId &&
+                x.UserId == actorUserId);
+
+        var actorMembership = (await actorQuery
+            .AsNoTracking()
+            .ToListAsync(cancellationToken))
+            .SingleOrDefault();
+
+        if (actorMembership is null ||
+            actorMembership.Role < WorkspaceRole.Admin)
+        {
+            db.ChangeTracker.Clear();
+            await transaction.RollbackAsync(CancellationToken.None);
+            return WorkflowTriggerAdministrationPersistenceOutcome.ActorAuthorizationConflict;
+        }
+
+        if (runAsUserId is { } runAs &&
+            minimumRunRole is { } requiredRole)
+        {
+            var runAsQuery = db.Database.IsNpgsql()
+                ? db.WorkspaceMemberships.FromSqlInterpolated(
+                    $"SELECT * FROM workspace_memberships WHERE \"WorkspaceId\" = {workspaceId} AND \"UserId\" = {runAs} FOR SHARE")
+                : db.WorkspaceMemberships.Where(x =>
+                    x.WorkspaceId == workspaceId &&
+                    x.UserId == runAs);
+
+            var runAsMembership = (await runAsQuery
+                .AsNoTracking()
+                .ToListAsync(cancellationToken))
+                .SingleOrDefault();
+
+            if (runAsMembership is null ||
+                runAsMembership.Role < requiredRole)
+            {
+                db.ChangeTracker.Clear();
+                await transaction.RollbackAsync(CancellationToken.None);
+                return WorkflowTriggerAdministrationPersistenceOutcome.RunAsAuthorizationConflict;
+            }
+        }
+
+        if (enforceActiveQuota)
+        {
+            var enabledCount = await db.WorkflowTriggers
+                .AsNoTracking()
+                .CountAsync(
+                    x => x.WorkspaceId == workspaceId &&
+                         x.Enabled,
+                    cancellationToken);
+
+            if (enabledCount >= maxActiveTriggersPerWorkspace)
+            {
+                db.ChangeTracker.Clear();
+                await transaction.RollbackAsync(CancellationToken.None);
+                return WorkflowTriggerAdministrationPersistenceOutcome.ActiveTriggerQuotaExceeded;
+            }
+        }
+
+        try
+        {
+            await db.SaveChangesAsync(cancellationToken);
+            await transaction.CommitAsync(cancellationToken);
+            return WorkflowTriggerAdministrationPersistenceOutcome.Saved;
+        }
+        catch (DbUpdateConcurrencyException)
+        {
+            await transaction.RollbackAsync(CancellationToken.None);
+            db.ChangeTracker.Clear();
+            return WorkflowTriggerAdministrationPersistenceOutcome.ConcurrencyConflict;
+        }
+    }
+
     public Task AddTriggerFireAsync(
         WorkflowTriggerFire fire,
         CancellationToken cancellationToken = default) =>

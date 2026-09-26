@@ -30,6 +30,8 @@ public sealed class WorkflowTriggerConfiguration
         builder.Property(x => x.TimeZoneId)
             .HasMaxLength(120)
             .IsRequired();
+        builder.Property(x => x.Enabled)
+            .IsConcurrencyToken();
 
         builder.HasIndex(x => new
         {

@@ -10,6 +10,15 @@ public enum WorkflowCheckpointDecisionPersistenceOutcome
     ApproverAuthorizationConflict = 3
 }
 
+public enum WorkflowTriggerAdministrationPersistenceOutcome
+{
+    Saved = 1,
+    ConcurrencyConflict = 2,
+    ActorAuthorizationConflict = 3,
+    RunAsAuthorizationConflict = 4,
+    ActiveTriggerQuotaExceeded = 5
+}
+
 public interface IWorkflowRepository
 {
     Task AddDefinitionAsync(
@@ -105,6 +114,15 @@ public interface IWorkflowRepository
     Task<IReadOnlyList<WorkflowTrigger>> ListTriggersAsync(
         Guid workspaceId,
         Guid definitionId,
+        CancellationToken cancellationToken = default);
+
+    Task<WorkflowTriggerAdministrationPersistenceOutcome> SaveTriggerAdministrationAsync(
+        Guid workspaceId,
+        Guid actorUserId,
+        Guid? runAsUserId,
+        WorkspaceRole? minimumRunRole,
+        bool enforceActiveQuota,
+        int maxActiveTriggersPerWorkspace,
         CancellationToken cancellationToken = default);
 
     Task AddTriggerFireAsync(

@@ -65,6 +65,13 @@ var artifactStorage = builder.Configuration
     .Get<ArtifactStorageOptions>() ?? new ArtifactStorageOptions();
 if (string.IsNullOrWhiteSpace(artifactStorage.RootPath))
     throw new InvalidOperationException("ArtifactStorage:RootPath is required.");
+
+var workflowScheduler = builder.Configuration
+    .GetSection(WorkflowSchedulerOptions.SectionName)
+    .Get<WorkflowSchedulerOptions>() ?? new WorkflowSchedulerOptions();
+if (workflowScheduler.Validate() is { Count: > 0 } workflowSchedulerErrors)
+    throw new InvalidOperationException(
+        string.Join(" ", workflowSchedulerErrors));
 var artifactPolicy = new ArtifactPolicy(
     artifactStorage.MaxArtifactBytes,
     artifactStorage.MaxWorkspaceBytes,
@@ -82,6 +89,7 @@ builder.Services.AddHealthChecks();
 builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.Configure<JwtOptions>(builder.Configuration.GetSection(JwtOptions.SectionName));
 builder.Services.Configure<WorkflowRunnerOptions>(builder.Configuration.GetSection(WorkflowRunnerOptions.SectionName));
+builder.Services.Configure<WorkflowSchedulerOptions>(builder.Configuration.GetSection(WorkflowSchedulerOptions.SectionName));
 builder.Services.Configure<AiRuntimeOptions>(builder.Configuration.GetSection(AiRuntimeOptions.SectionName));
 builder.Services.Configure<OpenAiEmbeddingOptions>(
     builder.Configuration.GetSection(OpenAiEmbeddingOptions.SectionName));
@@ -90,6 +98,11 @@ builder.Services.Configure<KnowledgeWorkerOptions>(
 builder.Services.Configure<ArtifactStorageOptions>(
     builder.Configuration.GetSection(ArtifactStorageOptions.SectionName));
 builder.Services.AddSingleton(artifactPolicy);
+builder.Services.AddSingleton(
+    new WorkflowSchedulerPolicy(
+        TimeSpan.FromMinutes(workflowScheduler.MinimumIntervalMinutes),
+        workflowScheduler.MaxActiveTriggersPerWorkspace));
+builder.Services.AddSingleton<IWorkflowScheduleCalculator, WorkflowScheduleCalculator>();
 builder.Services.AddSingleton<IArtifactStore, LocalArtifactStore>();
 
 builder.Services.AddDbContext<ICEHOTTDbContext>(options => options.UseNpgsql(connectionString));
@@ -104,6 +117,7 @@ builder.Services.AddScoped<IToolPolicyRepository, ToolPolicyRepository>();
 builder.Services.AddScoped<IWorkspaceAuditNoteRepository, WorkspaceAuditNoteRepository>();
 builder.Services.AddScoped<IWorkflowRepository, WorkflowRepository>();
 builder.Services.AddScoped<IWorkflowRunQueue, WorkflowRunQueue>();
+builder.Services.AddScoped<IWorkflowTriggerSchedulerStore, WorkflowTriggerSchedulerStore>();
 builder.Services.AddScoped<IArtifactRepository, ArtifactRepository>();
 builder.Services.AddScoped<IWorkflowAuditRepository, WorkflowAuditRepository>();
 builder.Services.AddScoped<IVectorStore, PostgresVectorStore>();
@@ -165,6 +179,7 @@ builder.Services.AddScoped<ToolExecutionService>();
 builder.Services.AddScoped<ToolExecutionRecoveryService>();
 builder.Services.AddScoped<WorkflowRunProcessor>();
 builder.Services.AddScoped<WorkflowCheckpointService>();
+builder.Services.AddScoped<WorkflowTriggerService>();
 builder.Services.AddSingleton<IWorkflowToolInvoker, WorkflowToolInvoker>();
 builder.Services.AddScoped<ArtifactService>();
 builder.Services.AddScoped<ArtifactMaintenanceService>();
@@ -184,6 +199,7 @@ if (artifactStorage.MaintenanceEnabled)
     builder.Services.AddHostedService<ArtifactMaintenanceWorker>();
 builder.Services.AddHostedService<ToolExecutionRecoveryWorker>();
 builder.Services.AddHostedService<WorkflowRunnerWorker>();
+builder.Services.AddHostedService<WorkflowSchedulerWorker>();
 
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer(options => options.TokenValidationParameters = new TokenValidationParameters

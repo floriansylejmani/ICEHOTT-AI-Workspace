@@ -167,7 +167,18 @@ ICEHOTT is a production-oriented AI workspace for agentic work: knowledge, tools
 - Real Release API smoke proved self-approval 403, Admin approval 200, repeat decision 409, detail state, runner resume, and audit actor
 - Full backend Debug and Release suites: 453/453 passing with PostgreSQL integration tests enabled
 
-**Next:** Phase 5F — Scheduled & Triggered Execution.
+### Phase 5F — Scheduled & Triggered Execution
+- Bounded 5-field cron schedules with server-side timezone/DST validation and minimum interval enforcement
+- Workspace Admin/Owner trigger create/list/enable/disable API with server-bound run-as identity
+- PostgreSQL workspace/membership locking protects trigger quota and enable authorization races
+- Due triggers use `FOR UPDATE SKIP LOCKED` plus durable fire rows and deterministic fire/run idempotency keys
+- Missed schedules perform at most one catch-up fire; pinned executable versions remain deterministic
+- Run-as authority is revalidated immediately before run creation and stale authority disables the trigger fail-closed
+- Claimed fires recover after scheduler restart without duplicate workflow runs
+- Real API smoke proved one catch-up fire, one scheduled run, checkpoint execution, audit trail, disable behavior, and restart recovery
+- Full backend Debug and Release suites: 476/476 passing with PostgreSQL integration tests enabled
+
+**Next:** Phase 5G — Workflow & Artifact Frontend Experience.
 
 ## Architecture
 
