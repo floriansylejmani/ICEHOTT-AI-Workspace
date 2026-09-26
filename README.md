@@ -189,7 +189,17 @@ ICEHOTT is a production-oriented AI workspace for agentic work: knowledge, tools
 - Backend Debug and Release suites: 479/479 passing
 - Frontend Vitest: 11/11 passing; ESLint and production build PASS
 
-**Next:** Phase 5H — Final Hardening & Release.
+### Phase 5H — Final Hardening & Release
+- Real PostgreSQL release validation: 479/479 backend tests PASS in Debug and Release; focused PostgreSQL race suite 64/64 PASS
+- Clean/pre-Phase-5 migration, rollback/reapply, and idempotent-script replay validated against isolated PostgreSQL
+- Frontend ESLint, 11/11 Vitest tests, and Next.js production build PASS
+- AI tests 5/5 PASS; benchmark harness dry-run PASS
+- Docker API and AI image builds PASS
+- Isolated API/worker restart smoke preserves a future-delay workflow without state loss or premature replay
+- Focused release smoke covers checkpoint success, cancellation, scheduler fire, tenant isolation, append-only audit, and artifact round-trip
+- Release evidence: [docs/PHASE-5H-FINAL-HARDENING-RELEASE.md](docs/PHASE-5H-FINAL-HARDENING-RELEASE.md)
+
+**Phase 5 is complete.** Further phases should be planned from a new architecture packet.
 
 ## Architecture
 

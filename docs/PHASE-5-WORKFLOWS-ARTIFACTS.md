@@ -603,6 +603,11 @@ trigger controls. No authorization rule may exist only in the frontend.
 Independent review, PostgreSQL race tests, crash/restart smoke, Docker/CI and
 release evidence.
 
+**Status:** Release validation completed on 2026-09-27 from an isolated clean
+worktree at baseline `ef3f7dd`. See
+[PHASE-5H-FINAL-HARDENING-RELEASE.md](PHASE-5H-FINAL-HARDENING-RELEASE.md)
+for the evidence matrix, restart smoke, API-scope note, and CI integration gate.
+
 ## Required test matrix
 
 Before merge, automated coverage must prove:
