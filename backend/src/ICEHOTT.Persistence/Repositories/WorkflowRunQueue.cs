@@ -238,6 +238,22 @@ public sealed class WorkflowRunQueue(
                                     AND r."ResumeAtUtc" <= @now
                                 )
                                 OR (
+                                    r."WaitReason" = 'Checkpoint'
+                                    AND EXISTS (
+                                        SELECT 1
+                                        FROM workflow_step_runs AS s
+                                        JOIN workflow_checkpoints AS c
+                                          ON c."StepRunId" = s."Id"
+                                         AND c."WorkflowRunId" = s."WorkflowRunId"
+                                         AND c."WorkspaceId" = s."WorkspaceId"
+                                        WHERE s."WorkflowRunId" = r."Id"
+                                          AND s."WorkspaceId" = r."WorkspaceId"
+                                          AND s."StepKey" = r."CurrentStepKey"
+                                          AND s."Status" = 'WaitingForCheckpoint'
+                                          AND c."Status" IN ('Approved', 'Rejected', 'Expired')
+                                    )
+                                )
+                                OR (
                                     r."WaitReason" = 'ToolExecution'
                                     AND EXISTS (
                                         SELECT 1
@@ -356,6 +372,35 @@ public sealed class WorkflowRunQueue(
                 run.ResumeAtUtc is { } resumeAt &&
                 resumeAt <= now;
 
+            var checkpointDue = false;
+            if (run.Status == WorkflowRunStatus.Waiting &&
+                run.WaitReason == WorkflowWaitReason.Checkpoint &&
+                !string.IsNullOrWhiteSpace(run.CurrentStepKey))
+            {
+                checkpointDue = await (
+                    from step in db.WorkflowStepRuns.AsNoTracking()
+                    join checkpoint in db.WorkflowCheckpoints.AsNoTracking()
+                        on new
+                        {
+                            StepRunId = step.Id,
+                            step.WorkflowRunId,
+                            step.WorkspaceId
+                        }
+                        equals new
+                        {
+                            checkpoint.StepRunId,
+                            checkpoint.WorkflowRunId,
+                            checkpoint.WorkspaceId
+                        }
+                    where step.WorkflowRunId == run.Id &&
+                          step.WorkspaceId == run.WorkspaceId &&
+                          step.StepKey == run.CurrentStepKey &&
+                          step.Status == WorkflowStepRunStatus.WaitingForCheckpoint &&
+                          checkpoint.Status != WorkflowCheckpointStatus.Pending
+                    select checkpoint.Id)
+                    .AnyAsync(cancellationToken);
+            }
+
             var expiredRunning =
                 run.Status == WorkflowRunStatus.Running &&
                 run.LeaseExpiresAtUtc is { } expired &&
@@ -364,6 +409,7 @@ public sealed class WorkflowRunQueue(
             if (!cancellationDue &&
                 run.Status != WorkflowRunStatus.Queued &&
                 !timerDue &&
+                !checkpointDue &&
                 !expiredRunning)
                 continue;
 

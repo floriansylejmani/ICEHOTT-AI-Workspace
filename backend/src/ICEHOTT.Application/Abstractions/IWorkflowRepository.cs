@@ -1,6 +1,14 @@
 using ICEHOTT.Domain.Workflows;
+using ICEHOTT.Domain.Workspaces;
 
 namespace ICEHOTT.Application.Abstractions;
+
+public enum WorkflowCheckpointDecisionPersistenceOutcome
+{
+    Saved = 1,
+    ConcurrencyConflict = 2,
+    ApproverAuthorizationConflict = 3
+}
 
 public interface IWorkflowRepository
 {
@@ -72,6 +80,18 @@ public interface IWorkflowRepository
     Task<WorkflowCheckpoint?> FindCheckpointByStepRunAsync(
         Guid workspaceId,
         Guid stepRunId,
+        CancellationToken cancellationToken = default);
+
+    Task<IReadOnlyList<WorkflowCheckpoint>> ListCheckpointsAsync(
+        Guid workspaceId,
+        Guid runId,
+        int limit,
+        CancellationToken cancellationToken = default);
+
+    Task<WorkflowCheckpointDecisionPersistenceOutcome> SaveCheckpointDecisionAsync(
+        Guid workspaceId,
+        Guid approverUserId,
+        WorkspaceRole minimumApproverRole,
         CancellationToken cancellationToken = default);
 
     Task AddTriggerAsync(

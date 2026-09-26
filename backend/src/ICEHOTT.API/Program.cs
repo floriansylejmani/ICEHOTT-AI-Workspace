@@ -164,6 +164,7 @@ builder.Services.AddSingleton<IToolOperationalLog, ToolOperationalLog>();
 builder.Services.AddScoped<ToolExecutionService>();
 builder.Services.AddScoped<ToolExecutionRecoveryService>();
 builder.Services.AddScoped<WorkflowRunProcessor>();
+builder.Services.AddScoped<WorkflowCheckpointService>();
 builder.Services.AddSingleton<IWorkflowToolInvoker, WorkflowToolInvoker>();
 builder.Services.AddScoped<ArtifactService>();
 builder.Services.AddScoped<ArtifactMaintenanceService>();

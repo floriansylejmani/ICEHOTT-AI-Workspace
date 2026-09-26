@@ -157,7 +157,17 @@ ICEHOTT is a production-oriented AI workspace for agentic work: knowledge, tools
 - Real API smoke proved upload, idempotent replay, checksum round-trip, container recreate persistence, and physical delete cleanup
 - Full backend Debug and Release suites: 443/443 passing with PostgreSQL integration tests enabled
 
-**Next:** Phase 5E — Human Checkpoints & Decisions.
+### Phase 5E — Human Checkpoints & Decisions
+- Workspace-scoped checkpoint list/detail/approve/reject API with non-disclosing tenant boundaries
+- Minimum approver role and optional two-person separation-of-duty enforcement
+- Decision reasons are bounded and credential-like content is redacted server-side
+- PostgreSQL membership locking revalidates approver authority at commit time and closes demotion/removal races
+- First-writer-wins concurrent decisions with one durable append-only audit event
+- Waiting workflow runs become claimable after Approved/Rejected/Expired decisions and resume through the existing fenced runner
+- Real Release API smoke proved self-approval 403, Admin approval 200, repeat decision 409, detail state, runner resume, and audit actor
+- Full backend Debug and Release suites: 453/453 passing with PostgreSQL integration tests enabled
+
+**Next:** Phase 5F — Scheduled & Triggered Execution.
 
 ## Architecture
 

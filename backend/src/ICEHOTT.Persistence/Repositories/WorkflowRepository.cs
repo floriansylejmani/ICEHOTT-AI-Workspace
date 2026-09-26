@@ -1,5 +1,6 @@
 using ICEHOTT.Application.Abstractions;
 using ICEHOTT.Domain.Workflows;
+using ICEHOTT.Domain.Workspaces;
 using Microsoft.EntityFrameworkCore;
 
 namespace ICEHOTT.Persistence.Repositories;
@@ -149,6 +150,77 @@ public sealed class WorkflowRepository(ICEHOTTDbContext db) : IWorkflowRepositor
         db.WorkflowCheckpoints.SingleOrDefaultAsync(
             x => x.WorkspaceId == workspaceId && x.StepRunId == stepRunId,
             cancellationToken);
+
+    public async Task<IReadOnlyList<WorkflowCheckpoint>> ListCheckpointsAsync(
+        Guid workspaceId,
+        Guid runId,
+        int limit,
+        CancellationToken cancellationToken = default)
+    {
+        var capped = Math.Clamp(limit, 1, 200);
+        var query = db.WorkflowCheckpoints
+            .AsNoTracking()
+            .Where(x =>
+                x.WorkspaceId == workspaceId &&
+                x.WorkflowRunId == runId);
+
+        if (IsSqlite())
+        {
+            var items = await query.ToListAsync(cancellationToken);
+            return items
+                .OrderByDescending(x => x.CreatedAtUtc)
+                .ThenByDescending(x => x.Id)
+                .Take(capped)
+                .ToArray();
+        }
+
+        return await query
+            .OrderByDescending(x => x.CreatedAtUtc)
+            .ThenByDescending(x => x.Id)
+            .Take(capped)
+            .ToListAsync(cancellationToken);
+    }
+
+    public async Task<WorkflowCheckpointDecisionPersistenceOutcome> SaveCheckpointDecisionAsync(
+        Guid workspaceId,
+        Guid approverUserId,
+        WorkspaceRole minimumApproverRole,
+        CancellationToken cancellationToken = default)
+    {
+        await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
+
+        var query = db.Database.IsNpgsql()
+            ? db.WorkspaceMemberships.FromSqlInterpolated(
+                $"SELECT * FROM workspace_memberships WHERE \"WorkspaceId\" = {workspaceId} AND \"UserId\" = {approverUserId} FOR SHARE")
+            : db.WorkspaceMemberships.Where(x =>
+                x.WorkspaceId == workspaceId &&
+                x.UserId == approverUserId);
+
+        var membership = (await query
+            .AsNoTracking()
+            .ToListAsync(cancellationToken))
+            .SingleOrDefault();
+
+        if (membership is null || membership.Role < minimumApproverRole)
+        {
+            db.ChangeTracker.Clear();
+            await transaction.RollbackAsync(CancellationToken.None);
+            return WorkflowCheckpointDecisionPersistenceOutcome.ApproverAuthorizationConflict;
+        }
+
+        try
+        {
+            await db.SaveChangesAsync(cancellationToken);
+            await transaction.CommitAsync(cancellationToken);
+            return WorkflowCheckpointDecisionPersistenceOutcome.Saved;
+        }
+        catch (DbUpdateConcurrencyException)
+        {
+            await transaction.RollbackAsync(CancellationToken.None);
+            db.ChangeTracker.Clear();
+            return WorkflowCheckpointDecisionPersistenceOutcome.ConcurrencyConflict;
+        }
+    }
 
     public Task AddTriggerAsync(
         WorkflowTrigger trigger,
