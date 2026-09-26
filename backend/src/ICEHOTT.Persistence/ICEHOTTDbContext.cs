@@ -4,6 +4,7 @@ using ICEHOTT.Domain.Knowledge;
 using ICEHOTT.Domain.Security;
 using ICEHOTT.Domain.Tools;
 using ICEHOTT.Domain.Users;
+using ICEHOTT.Domain.Workflows;
 using ICEHOTT.Domain.Workspaces;
 using Microsoft.EntityFrameworkCore;
 
@@ -29,6 +30,15 @@ public sealed class ICEHOTTDbContext(DbContextOptions<ICEHOTTDbContext> options)
     public DbSet<ToolPolicy> ToolPolicies => Set<ToolPolicy>();
     public DbSet<ToolPolicyAuditEvent> ToolPolicyAuditEvents => Set<ToolPolicyAuditEvent>();
     public DbSet<ToolQuotaCounter> ToolQuotaCounters => Set<ToolQuotaCounter>();
+    public DbSet<WorkflowDefinition> WorkflowDefinitions => Set<WorkflowDefinition>();
+    public DbSet<WorkflowVersion> WorkflowVersions => Set<WorkflowVersion>();
+    public DbSet<WorkflowRun> WorkflowRuns => Set<WorkflowRun>();
+    public DbSet<WorkflowStepRun> WorkflowStepRuns => Set<WorkflowStepRun>();
+    public DbSet<WorkflowCheckpoint> WorkflowCheckpoints => Set<WorkflowCheckpoint>();
+    public DbSet<Artifact> Artifacts => Set<Artifact>();
+    public DbSet<WorkflowTrigger> WorkflowTriggers => Set<WorkflowTrigger>();
+    public DbSet<WorkflowTriggerFire> WorkflowTriggerFires => Set<WorkflowTriggerFire>();
+    public DbSet<WorkflowAuditEvent> WorkflowAuditEvents => Set<WorkflowAuditEvent>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {

@@ -79,6 +79,9 @@ builder.Services.AddScoped<IKnowledgeJobQueue, KnowledgeJobQueue>();
 builder.Services.AddScoped<IToolExecutionRepository, ToolExecutionRepository>();
 builder.Services.AddScoped<IToolPolicyRepository, ToolPolicyRepository>();
 builder.Services.AddScoped<IWorkspaceAuditNoteRepository, WorkspaceAuditNoteRepository>();
+builder.Services.AddScoped<IWorkflowRepository, WorkflowRepository>();
+builder.Services.AddScoped<IArtifactRepository, ArtifactRepository>();
+builder.Services.AddScoped<IWorkflowAuditRepository, WorkflowAuditRepository>();
 builder.Services.AddScoped<IVectorStore, PostgresVectorStore>();
 builder.Services.AddScoped<IUnitOfWork>(sp => sp.GetRequiredService<ICEHOTTDbContext>());
 

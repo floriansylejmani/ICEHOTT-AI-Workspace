@@ -127,6 +127,20 @@ ICEHOTT is a production-oriented AI workspace for agentic work: knowledge, tools
 - PostgreSQL-enforced append-only execution and policy audit rows
 - Prompt-injection abuse tests proving untrusted text cannot grant approval or tool authority
 
+### Phase 5A — Workflows & Artifacts Architecture Freeze
+- Durable workflow state machines, version pinning, lease fencing, run-as revalidation, checkpoints, artifacts, and bounded scheduling contracts
+- PostgreSQL remains the durable orchestration authority; Redis is optional coordination only
+- Sensitive tool work preserves all Phase 4.5 policy, approval, idempotency, quota, secret, and audit guarantees
+
+### Phase 5B — Domain & Persistence
+- Workflow definitions/versions/runs/steps/checkpoints/triggers, artifact metadata, and append-only workflow audit domain model
+- Workspace-aware composite foreign keys, Active-version uniqueness, run idempotency, trigger-fire dedupe, and lease-generation persistence
+- Repository layer with explicit workspace-scoped reads
+- PostgreSQL migration validated from clean DB, Phase 4.5 upgrade, rollback/reapply, and idempotent script replay
+- Full backend Debug and Release suites: 406/406 passing with PostgreSQL integration tests enabled
+
+**Next:** Phase 5C — Durable Runner & Recovery.
+
 ## Architecture
 
 ```text
