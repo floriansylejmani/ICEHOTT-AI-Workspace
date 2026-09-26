@@ -255,6 +255,54 @@ Representative tool errors:
 - `request_body_too_large` (413)
 - `tool_quota_exceeded` (429, `Retry-After`)
 
+## Workflow experience endpoints
+
+All workflow experience endpoints require a valid access token and current workspace membership.
+
+### GET `/api/workspaces/{workspaceId}/workflows`
+
+Returns bounded workflow definition summaries for the workspace.
+
+### GET `/api/workspaces/{workspaceId}/workflows/{workflowId}`
+
+Returns definition metadata plus version summaries. The response intentionally excludes mutable/raw `DefinitionJson`.
+
+### GET `/api/workspaces/{workspaceId}/workflow-runs`
+
+Returns recent workspace workflow runs with status, current step, wait reason, bounded error code, and timestamps.
+
+### GET `/api/workspaces/{workspaceId}/workflow-runs/{runId}`
+
+Returns one run plus a durable step timeline. Raw step input/output JSON and raw error messages are not exposed by this experience projection.
+
+Checkpoint decisions remain available through:
+
+- `GET /api/workspaces/{workspaceId}/workflow-runs/{runId}/checkpoints`
+- `GET /api/workspaces/{workspaceId}/workflow-runs/{runId}/checkpoints/{checkpointId}`
+- `POST /api/workspaces/{workspaceId}/workflow-runs/{runId}/checkpoints/{checkpointId}/approve`
+- `POST /api/workspaces/{workspaceId}/workflow-runs/{runId}/checkpoints/{checkpointId}/reject`
+
+Scheduled trigger administration remains available through:
+
+- `POST /api/workspaces/{workspaceId}/workflows/{workflowId}/triggers`
+- `GET /api/workspaces/{workspaceId}/workflows/{workflowId}/triggers`
+- `POST /api/workspaces/{workspaceId}/workflows/{workflowId}/triggers/{triggerId}/enable`
+- `POST /api/workspaces/{workspaceId}/workflows/{workflowId}/triggers/{triggerId}/disable`
+
+Trigger mutations require Admin/Owner server-side. The browser role check is only an affordance.
+
+## Artifact endpoints
+
+All artifact operations are workspace scoped and server authorized.
+
+- `POST /api/workspaces/{workspaceId}/artifacts/upload`
+- `GET /api/workspaces/{workspaceId}/artifacts`
+- `GET /api/workspaces/{workspaceId}/artifacts/{artifactId}`
+- `GET /api/workspaces/{workspaceId}/artifacts/{artifactId}/content`
+- `DELETE /api/workspaces/{workspaceId}/artifacts/{artifactId}`
+
+Uploads use `multipart/form-data`. Storage keys and direct filesystem paths are never returned. Content downloads pass through the authenticated API after current membership validation.
+
 ## Roles
 
 ```text

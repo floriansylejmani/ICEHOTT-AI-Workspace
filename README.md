@@ -178,7 +178,18 @@ ICEHOTT is a production-oriented AI workspace for agentic work: knowledge, tools
 - Real API smoke proved one catch-up fire, one scheduled run, checkpoint execution, audit trail, disable behavior, and restart recovery
 - Full backend Debug and Release suites: 476/476 passing with PostgreSQL integration tests enabled
 
-**Next:** Phase 5G — Workflow & Artifact Frontend Experience.
+### Phase 5G — Workflow & Artifact Frontend Experience
+- First-class Workflows and Artifacts navigation in the authenticated Next.js workspace
+- Workflow definition/detail views with pinned version metadata and safe server projections
+- Recent run list plus durable step timeline without exposing raw workflow input/output JSON
+- Human checkpoint approve/reject actions wired to the existing server-authoritative decision plane
+- Scheduled trigger create/list/enable/disable controls with Admin/Owner affordances
+- Artifact upload/list/download/delete browser with multipart uploads and client idempotency keys
+- New workflow/read API is workspace-scoped and cross-tenant non-disclosing
+- Backend Debug and Release suites: 479/479 passing
+- Frontend Vitest: 11/11 passing; ESLint and production build PASS
+
+**Next:** Phase 5H — Final Hardening & Release.
 
 ## Architecture
 
