@@ -5,12 +5,14 @@ using ICEHOTT.API.Background;
 using ICEHOTT.API.Services;
 using ICEHOTT.Application.Abstractions;
 using ICEHOTT.Application.Agents;
+using ICEHOTT.Application.Artifacts;
 using ICEHOTT.Application.Auth;
 using ICEHOTT.Application.Knowledge;
 using ICEHOTT.Application.Tools;
 using ICEHOTT.Application.Workflows;
 using ICEHOTT.Application.Workspaces;
 using ICEHOTT.Infrastructure.Ai;
+using ICEHOTT.Infrastructure.Artifacts;
 using ICEHOTT.Infrastructure.Documents;
 using ICEHOTT.Infrastructure.Security;
 using ICEHOTT.Infrastructure.Tools;
@@ -58,6 +60,20 @@ if (toolQuotas.Validate() is { Count: > 0 } toolQuotaErrors)
 var knowledgeWorker = builder.Configuration
     .GetSection(KnowledgeWorkerOptions.SectionName)
     .Get<KnowledgeWorkerOptions>() ?? new KnowledgeWorkerOptions();
+var artifactStorage = builder.Configuration
+    .GetSection(ArtifactStorageOptions.SectionName)
+    .Get<ArtifactStorageOptions>() ?? new ArtifactStorageOptions();
+if (string.IsNullOrWhiteSpace(artifactStorage.RootPath))
+    throw new InvalidOperationException("ArtifactStorage:RootPath is required.");
+var artifactPolicy = new ArtifactPolicy(
+    artifactStorage.MaxArtifactBytes,
+    artifactStorage.MaxWorkspaceBytes,
+    artifactStorage.MaxArtifactsPerWorkspace,
+    artifactStorage.MaintenanceIntervalSeconds,
+    artifactStorage.PendingRecoverySeconds,
+    artifactStorage.StagingRetentionMinutes);
+if (artifactPolicy.Validate() is { Count: > 0 } artifactPolicyErrors)
+    throw new InvalidOperationException(string.Join(" ", artifactPolicyErrors));
 
 builder.Services.AddControllers().AddJsonOptions(options =>
     options.JsonSerializerOptions.Converters.Add(new JsonStringEnumConverter()));
@@ -71,6 +87,10 @@ builder.Services.Configure<OpenAiEmbeddingOptions>(
     builder.Configuration.GetSection(OpenAiEmbeddingOptions.SectionName));
 builder.Services.Configure<KnowledgeWorkerOptions>(
     builder.Configuration.GetSection(KnowledgeWorkerOptions.SectionName));
+builder.Services.Configure<ArtifactStorageOptions>(
+    builder.Configuration.GetSection(ArtifactStorageOptions.SectionName));
+builder.Services.AddSingleton(artifactPolicy);
+builder.Services.AddSingleton<IArtifactStore, LocalArtifactStore>();
 
 builder.Services.AddDbContext<ICEHOTTDbContext>(options => options.UseNpgsql(connectionString));
 builder.Services.AddScoped<IUserRepository, UserRepository>();
@@ -145,6 +165,8 @@ builder.Services.AddScoped<ToolExecutionService>();
 builder.Services.AddScoped<ToolExecutionRecoveryService>();
 builder.Services.AddScoped<WorkflowRunProcessor>();
 builder.Services.AddSingleton<IWorkflowToolInvoker, WorkflowToolInvoker>();
+builder.Services.AddScoped<ArtifactService>();
+builder.Services.AddScoped<ArtifactMaintenanceService>();
 builder.Services.AddScoped<ToolPolicyService>();
 
 var promotionRequirements = RagPromotionRequirements.ProviderBenchmarkDefault with
@@ -157,6 +179,8 @@ builder.Services.AddSingleton<RagPromotionPolicy>();
 
 if (knowledgeWorker.Enabled)
     builder.Services.AddHostedService<KnowledgeIngestionWorker>();
+if (artifactStorage.MaintenanceEnabled)
+    builder.Services.AddHostedService<ArtifactMaintenanceWorker>();
 builder.Services.AddHostedService<ToolExecutionRecoveryWorker>();
 builder.Services.AddHostedService<WorkflowRunnerWorker>();
 

@@ -148,7 +148,16 @@ ICEHOTT is a production-oriented AI workspace for agentic work: knowledge, tools
 - Hosted workflow runner with real restart-recovery smoke evidence
 - Full backend Debug and Release suites: 426/426 passing with PostgreSQL integration tests enabled
 
-**Next:** Phase 5D — Artifacts & File Storage.
+### Phase 5D — Artifacts & File Storage
+- Workspace-scoped artifact upload/list/metadata/content/delete API with server-side authorization
+- Streaming local artifact store with staged writes, SHA-256/size verification, strict storage-key validation, and idempotent finalization
+- PostgreSQL quota/idempotency enforcement with concurrent-upload race protection
+- Durable Pending/Ready/Failed/Deleted lifecycle plus crash/orphan maintenance recovery
+- Docker named volume keeps artifact bytes across API container recreation
+- Real API smoke proved upload, idempotent replay, checksum round-trip, container recreate persistence, and physical delete cleanup
+- Full backend Debug and Release suites: 443/443 passing with PostgreSQL integration tests enabled
+
+**Next:** Phase 5E — Human Checkpoints & Decisions.
 
 ## Architecture
 

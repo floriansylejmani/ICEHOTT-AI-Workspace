@@ -50,8 +50,11 @@ services:
       AiRuntime__BaseUrl: http://ai:8000
       AiRuntime__TimeoutSeconds: "30"
       OpenAiEmbedding__ApiKey: ${OPENAI_API_KEY:-}
+      ArtifactStorage__RootPath: /app/data/artifacts
     ports:
       - "5050:8080"
+    volumes:
+      - artifact_data:/app/data/artifacts
     depends_on:
       postgres:
         condition: service_healthy
@@ -62,3 +65,4 @@ services:
 
 volumes:
   postgres_data:
+  artifact_data:

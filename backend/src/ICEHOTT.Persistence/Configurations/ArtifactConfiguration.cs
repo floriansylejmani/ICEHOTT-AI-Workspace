@@ -33,13 +33,22 @@ public sealed class ArtifactConfiguration
         builder.Property(x => x.StorageKey)
             .HasMaxLength(500)
             .IsRequired();
+        builder.Property(x => x.StagingKey)
+            .HasMaxLength(500);
+        builder.Property(x => x.IdempotencyKey)
+            .HasMaxLength(160);
         builder.Property(x => x.Status)
             .HasConversion<string>()
             .HasMaxLength(20)
             .IsRequired();
 
         builder.HasIndex(x => x.StorageKey).IsUnique();
+        builder.HasIndex(x => new { x.WorkspaceId, x.IdempotencyKey })
+            .IsUnique()
+            .HasFilter("\"IdempotencyKey\" IS NOT NULL");
         builder.HasIndex(x => new { x.WorkspaceId, x.CreatedAtUtc });
+        builder.HasIndex(x => new { x.Status, x.CreatedAtUtc });
+        builder.HasIndex(x => new { x.Status, x.StorageDeletedAtUtc });
 
         builder.HasOne<Workspace>().WithMany()
             .HasForeignKey(x => x.WorkspaceId)
