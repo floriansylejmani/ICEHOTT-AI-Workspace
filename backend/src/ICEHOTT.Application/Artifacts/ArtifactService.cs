@@ -9,6 +9,7 @@ namespace ICEHOTT.Application.Artifacts;
 public sealed class ArtifactService(
     IWorkspaceRepository workspaces,
     IArtifactRepository artifacts,
+    IWorkflowRepository workflows,
     IArtifactStore store,
     IWorkflowAuditRepository audit,
     IUnitOfWork unitOfWork,
@@ -74,11 +75,48 @@ public sealed class ArtifactService(
         Guid? stepRunId = null,
         CancellationToken cancellationToken = default)
     {
-        if (await workspaces.FindMembershipAsync(
-                userId,
-                workspaceId,
-                cancellationToken) is null)
+        var membership = await workspaces.FindMembershipAsync(
+            userId,
+            workspaceId,
+            cancellationToken);
+        if (membership is null)
             return new(null, "workspace_not_found");
+
+        if (workflowRunId.HasValue != stepRunId.HasValue)
+            return new(null, "invalid_workflow_binding");
+
+        if (workflowRunId is { } runId && stepRunId is { } boundStepRunId)
+        {
+            var run = await workflows.FindRunAsync(
+                workspaceId,
+                runId,
+                cancellationToken);
+            if (run is null)
+                return new(null, "workflow_binding_not_found");
+
+            var step = (await workflows.ListStepRunsAsync(
+                    workspaceId,
+                    runId,
+                    cancellationToken))
+                .SingleOrDefault(x => x.Id == boundStepRunId);
+
+            if (step is null ||
+                step.StepType != WorkflowStepType.Artifact)
+                return new(null, "workflow_binding_not_found");
+
+            if (run.RunAsUserId != userId &&
+                membership.Role < WorkspaceRole.Admin)
+                return new(null, "forbidden");
+
+            if (run.Status != WorkflowRunStatus.Waiting ||
+                run.WaitReason != WorkflowWaitReason.Artifact ||
+                step.Status != WorkflowStepRunStatus.WaitingForArtifact ||
+                !string.Equals(
+                    run.CurrentStepKey,
+                    step.StepKey,
+                    StringComparison.Ordinal))
+                return new(null, "workflow_binding_invalid_state");
+        }
 
         var normalizedFileName = NormalizeFileName(fileName);
         if (normalizedFileName is null)

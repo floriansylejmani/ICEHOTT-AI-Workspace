@@ -76,6 +76,12 @@ public sealed class WorkflowStepRun
         NextAttemptAtUtc = resumeAtUtc;
     }
 
+    public void WaitForArtifact()
+    {
+        RequireRunning();
+        Status = WorkflowStepRunStatus.WaitingForArtifact;
+    }
+
     public void WaitForTool(Guid toolExecutionId)
     {
         RequireRunning();
@@ -112,7 +118,7 @@ public sealed class WorkflowStepRun
 
     public void Succeed(string? outputJson, DateTimeOffset completedAtUtc)
     {
-        if (Status is not (WorkflowStepRunStatus.Running or WorkflowStepRunStatus.WaitingForCheckpoint or WorkflowStepRunStatus.WaitingForDelay or WorkflowStepRunStatus.WaitingForTool))
+        if (Status is not (WorkflowStepRunStatus.Running or WorkflowStepRunStatus.WaitingForCheckpoint or WorkflowStepRunStatus.WaitingForDelay or WorkflowStepRunStatus.WaitingForTool or WorkflowStepRunStatus.WaitingForArtifact))
             throw new InvalidOperationException("Only active workflow steps can succeed.");
 
         Status = WorkflowStepRunStatus.Succeeded;

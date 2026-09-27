@@ -645,6 +645,7 @@ public sealed class ArtifactServicePostgresTests
         new(
             new WorkspaceRepository(db),
             new ArtifactRepository(db),
+            new WorkflowRepository(db),
             store,
             new WorkflowAuditRepository(db),
             db,

@@ -199,7 +199,16 @@ ICEHOTT is a production-oriented AI workspace for agentic work: knowledge, tools
 - Focused release smoke covers checkpoint success, cancellation, scheduler fire, tenant isolation, append-only audit, and artifact round-trip
 - Release evidence: [docs/PHASE-5H-FINAL-HARDENING-RELEASE.md](docs/PHASE-5H-FINAL-HARDENING-RELEASE.md)
 
-**Phase 5 is complete.** Further phases should be planned from a new architecture packet.
+**Phase 5 is complete.**
+
+### Phase 6A — Workflow Authoring & Artifact-Gated Execution
+- Authenticated create/version/activate/archive workflow mutation APIs with Admin/Owner enforcement
+- Run creation with server-side role revalidation and transactional idempotency
+- Requester/Admin cancellation with append-only workflow audit events
+- Artifact workflow steps now wait durably for a correctly bound ready artifact, then resume through the existing leased runner
+- Artifact uploads validate exact workspace/run/step binding and run-as authority before accepting workflow completion data
+- Backend Debug suite: 484/484 passing locally; real PostgreSQL race/resume coverage is gated by CI
+- Architecture packet: [docs/PHASE-6-WORKFLOW-AUTHORING-ARTIFACT-EXECUTION.md](docs/PHASE-6-WORKFLOW-AUTHORING-ARTIFACT-EXECUTION.md)
 
 ## Architecture
 

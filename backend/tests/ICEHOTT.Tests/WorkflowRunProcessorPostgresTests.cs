@@ -483,6 +483,91 @@ public sealed class WorkflowRunProcessorPostgresTests
             await DropIsolatedDatabaseAsync(databaseName);
         }
     }
+    [Fact]
+    public async Task Artifact_Workflow_Wakes_When_Bound_Artifact_Is_Ready()
+    {
+        if (string.IsNullOrWhiteSpace(Connection)) return;
+        var (databaseName, isolatedConnection) = await CreateIsolatedDatabaseAsync();
+
+        try
+        {
+            var clock = new MutableTimeProvider(
+                new DateTimeOffset(2026, 9, 27, 18, 0, 0, TimeSpan.Zero));
+            var seed = await SeedWorkflowAsync(
+                isolatedConnection,
+                """{"steps":[{"key":"artifact","type":"artifact"}]}""",
+                clock.GetUtcNow());
+
+            Guid stepRunId;
+            await using (var db = CreateContext(isolatedConnection))
+            {
+                var queue = new WorkflowRunQueue(db, clock);
+                var lease = Assert.IsType<WorkflowRunLease>(
+                    await queue.LeaseNextAsync(Guid.NewGuid(), TimeSpan.FromSeconds(90)));
+                var processor = CreateProcessor(
+                    db, queue, new DatabaseToolInvoker(isolatedConnection, clock), clock);
+
+                var result = await processor.ProcessAsync(lease);
+                Assert.Equal(WorkflowRunStatus.Waiting, result.Status);
+
+                var run = await db.WorkflowRuns.SingleAsync(x => x.Id == seed.RunId);
+                var step = await db.WorkflowStepRuns.SingleAsync(
+                    x => x.WorkflowRunId == seed.RunId);
+                Assert.Equal(WorkflowWaitReason.Artifact, run.WaitReason);
+                Assert.Equal(WorkflowStepRunStatus.WaitingForArtifact, step.Status);
+                stepRunId = step.Id;
+            }
+
+            Guid artifactId;
+            await using (var db = CreateContext(isolatedConnection))
+            {
+                artifactId = Guid.NewGuid();
+                var artifact = new Artifact(
+                    artifactId,
+                    seed.WorkspaceId,
+                    seed.OwnerId,
+                    "result.txt",
+                    "text/plain",
+                    4,
+                    new string('c', 64),
+                    $"workspaces/{seed.WorkspaceId:N}/artifacts/{artifactId:N}",
+                    clock.GetUtcNow(),
+                    seed.RunId,
+                    stepRunId);
+                artifact.MarkReady();
+                db.Artifacts.Add(artifact);
+                await db.SaveChangesAsync();
+            }
+
+            await using (var db = CreateContext(isolatedConnection))
+            {
+                var queue = new WorkflowRunQueue(db, clock);
+                var lease = Assert.IsType<WorkflowRunLease>(
+                    await queue.LeaseNextAsync(Guid.NewGuid(), TimeSpan.FromSeconds(90)));
+                var processor = CreateProcessor(
+                    db, queue, new DatabaseToolInvoker(isolatedConnection, clock), clock);
+
+                var result = await processor.ProcessAsync(lease);
+                Assert.Equal(WorkflowRunStatus.Succeeded, result.Status);
+            }
+
+            await using var verify = CreateContext(isolatedConnection);
+            var finalRun = await verify.WorkflowRuns.SingleAsync(x => x.Id == seed.RunId);
+            var finalStep = await verify.WorkflowStepRuns.SingleAsync(
+                x => x.WorkflowRunId == seed.RunId);
+            Assert.Equal(WorkflowRunStatus.Succeeded, finalRun.Status);
+            Assert.Equal(WorkflowStepRunStatus.Succeeded, finalStep.Status);
+            Assert.Contains(
+                artifactId.ToString(),
+                finalStep.OutputJson ?? string.Empty,
+                StringComparison.OrdinalIgnoreCase);
+        }
+        finally
+        {
+            await DropIsolatedDatabaseAsync(databaseName);
+        }
+    }
+
     private static WorkflowRunProcessor CreateProcessor(
         ICEHOTTDbContext db,
         IWorkflowRunQueue queue,
@@ -492,6 +577,7 @@ public sealed class WorkflowRunProcessorPostgresTests
             new WorkflowRepository(db),
             queue,
             new WorkflowAuditRepository(db),
+            new ArtifactRepository(db),
             new WorkspaceRepository(db),
             toolInvoker,
             clock);

@@ -31,6 +31,12 @@ public interface IArtifactRepository
         Guid artifactId,
         CancellationToken cancellationToken = default);
 
+    Task<Artifact?> FindReadyByStepAsync(
+        Guid workspaceId,
+        Guid workflowRunId,
+        Guid stepRunId,
+        CancellationToken cancellationToken = default);
+
     Task<Artifact?> FindByIdempotencyKeyAsync(
         Guid workspaceId,
         string idempotencyKey,

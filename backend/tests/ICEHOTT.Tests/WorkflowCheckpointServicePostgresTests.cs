@@ -577,6 +577,7 @@ public sealed class WorkflowCheckpointServicePostgresTests
             new WorkflowRepository(db),
             queue,
             new WorkflowAuditRepository(db),
+            new ArtifactRepository(db),
             new WorkspaceRepository(db),
             new UnexpectedToolInvoker(),
             clock);

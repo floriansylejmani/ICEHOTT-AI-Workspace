@@ -34,7 +34,9 @@ public sealed class ArtifactsController(
             request.File.Length,
             stream,
             request.IdempotencyKey,
-            cancellationToken: cancellationToken);
+            request.WorkflowRunId,
+            request.StepRunId,
+            cancellationToken);
 
         if (!result.Succeeded)
             return MapError(result);
@@ -148,7 +150,8 @@ public sealed class ArtifactsController(
         return result.ErrorCode switch
         {
             "workspace_not_found" or
-            "artifact_not_found" =>
+            "artifact_not_found" or
+            "workflow_binding_not_found" =>
                 NotFound(payload),
 
             "forbidden" =>
@@ -166,6 +169,7 @@ public sealed class ArtifactsController(
                     StatusCodes.Status415UnsupportedMediaType,
                     payload),
 
+            "workflow_binding_invalid_state" or
             "artifact_quota_exceeded" or
             "idempotency_conflict" or
             "artifact_not_ready" =>

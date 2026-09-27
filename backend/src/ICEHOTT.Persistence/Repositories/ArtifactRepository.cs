@@ -114,6 +114,19 @@ public sealed class ArtifactRepository(ICEHOTTDbContext db) : IArtifactRepositor
             x => x.WorkspaceId == workspaceId && x.Id == artifactId,
             cancellationToken);
 
+    public Task<Artifact?> FindReadyByStepAsync(
+        Guid workspaceId,
+        Guid workflowRunId,
+        Guid stepRunId,
+        CancellationToken cancellationToken = default) =>
+        db.Artifacts
+            .Where(x => x.WorkspaceId == workspaceId &&
+                        x.WorkflowRunId == workflowRunId &&
+                        x.StepRunId == stepRunId &&
+                        x.Status == ArtifactStatus.Ready)
+            .OrderBy(x => x.CreatedAtUtc)
+            .FirstOrDefaultAsync(cancellationToken);
+
     public Task<Artifact?> FindByIdempotencyKeyAsync(
         Guid workspaceId,
         string idempotencyKey,

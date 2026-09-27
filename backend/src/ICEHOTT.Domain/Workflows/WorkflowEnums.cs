@@ -30,7 +30,8 @@ public enum WorkflowWaitReason
     Checkpoint = 1,
     Delay = 2,
     RetryBackoff = 3,
-    ToolExecution = 4
+    ToolExecution = 4,
+    Artifact = 5
 }
 
 public enum WorkflowStepType
@@ -55,7 +56,8 @@ public enum WorkflowStepRunStatus
     Failed = 9,
     Cancelled = 10,
     Skipped = 11,
-    OutcomeUnknown = 12
+    OutcomeUnknown = 12,
+    WaitingForArtifact = 13
 }
 
 public enum WorkflowCheckpointStatus
@@ -112,5 +114,7 @@ public enum WorkflowAuditEventType
     TriggerEnabled = 21,
     TriggerDisabled = 22,
     TriggerFireFailed = 23,
-    TriggerSkipped = 24
+    TriggerSkipped = 24,
+    DefinitionArchived = 25,
+    CancellationRequested = 26
 }

@@ -254,6 +254,22 @@ public sealed class WorkflowRunQueue(
                                     )
                                 )
                                 OR (
+                                    r."WaitReason" = 'Artifact'
+                                    AND EXISTS (
+                                        SELECT 1
+                                        FROM workflow_step_runs AS s
+                                        JOIN artifacts AS a
+                                          ON a."StepRunId" = s."Id"
+                                         AND a."WorkflowRunId" = s."WorkflowRunId"
+                                         AND a."WorkspaceId" = s."WorkspaceId"
+                                        WHERE s."WorkflowRunId" = r."Id"
+                                          AND s."WorkspaceId" = r."WorkspaceId"
+                                          AND s."StepKey" = r."CurrentStepKey"
+                                          AND s."Status" = 'WaitingForArtifact'
+                                          AND a."Status" = 'Ready'
+                                    )
+                                )
+                                OR (
                                     r."WaitReason" = 'ToolExecution'
                                     AND EXISTS (
                                         SELECT 1
@@ -401,6 +417,35 @@ public sealed class WorkflowRunQueue(
                     .AnyAsync(cancellationToken);
             }
 
+            var artifactDue = false;
+            if (run.Status == WorkflowRunStatus.Waiting &&
+                run.WaitReason == WorkflowWaitReason.Artifact &&
+                !string.IsNullOrWhiteSpace(run.CurrentStepKey))
+            {
+                artifactDue = await (
+                    from step in db.WorkflowStepRuns.AsNoTracking()
+                    join artifact in db.Artifacts.AsNoTracking()
+                        on new
+                        {
+                            StepRunId = (Guid?)step.Id,
+                            WorkflowRunId = (Guid?)step.WorkflowRunId,
+                            step.WorkspaceId
+                        }
+                        equals new
+                        {
+                            artifact.StepRunId,
+                            artifact.WorkflowRunId,
+                            artifact.WorkspaceId
+                        }
+                    where step.WorkflowRunId == run.Id &&
+                          step.WorkspaceId == run.WorkspaceId &&
+                          step.StepKey == run.CurrentStepKey &&
+                          step.Status == WorkflowStepRunStatus.WaitingForArtifact &&
+                          artifact.Status == ArtifactStatus.Ready
+                    select artifact.Id)
+                    .AnyAsync(cancellationToken);
+            }
+
             var expiredRunning =
                 run.Status == WorkflowRunStatus.Running &&
                 run.LeaseExpiresAtUtc is { } expired &&
@@ -410,6 +455,7 @@ public sealed class WorkflowRunQueue(
                 run.Status != WorkflowRunStatus.Queued &&
                 !timerDue &&
                 !checkpointDue &&
+                !artifactDue &&
                 !expiredRunning)
                 continue;
 

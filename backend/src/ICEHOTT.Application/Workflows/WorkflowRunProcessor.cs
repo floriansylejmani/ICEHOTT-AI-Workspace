@@ -23,6 +23,7 @@ public sealed class WorkflowRunProcessor(
     IWorkflowRepository workflows,
     IWorkflowRunQueue queue,
     IWorkflowAuditRepository audit,
+    IArtifactRepository artifacts,
     IWorkspaceRepository workspaces,
     IWorkflowToolInvoker toolInvoker,
     TimeProvider clock)
@@ -314,6 +315,13 @@ public sealed class WorkflowRunProcessor(
                     lease,
                     cancellationToken);
 
+            case WorkflowStepRunStatus.WaitingForArtifact:
+                return await HandleArtifactStateAsync(
+                    run,
+                    stepRun,
+                    lease,
+                    cancellationToken);
+
             case WorkflowStepRunStatus.Running:
                 return await HandleRunningStepAsync(
                     run,
@@ -456,12 +464,10 @@ public sealed class WorkflowRunProcessor(
                 lease,
                 cancellationToken),
 
-            WorkflowStepType.Artifact => await FailStepAndRunAsync(
+            WorkflowStepType.Artifact => await HandleArtifactStartAsync(
                 run,
                 stepRun,
                 lease,
-                "workflow_artifact_handler_unavailable",
-                "Artifact execution is introduced in Phase 5D.",
                 cancellationToken),
 
             WorkflowStepType.Condition => await FailStepAndRunAsync(
@@ -524,6 +530,73 @@ public sealed class WorkflowRunProcessor(
             run,
             lease,
             cancellationToken);
+    }
+
+    private async Task<WorkflowRunProcessResult?> HandleArtifactStartAsync(
+        WorkflowRun run,
+        WorkflowStepRun stepRun,
+        WorkflowRunLease lease,
+        CancellationToken cancellationToken)
+    {
+        var ready = await artifacts.FindReadyByStepAsync(
+            run.WorkspaceId,
+            run.Id,
+            stepRun.Id,
+            cancellationToken);
+
+        if (ready is not null)
+            return await CompleteArtifactStepAsync(
+                run, stepRun, ready, lease, cancellationToken);
+
+        stepRun.WaitForArtifact();
+        run.Wait(WorkflowWaitReason.Artifact);
+        return await SaveWaitingAsync(run, lease, cancellationToken);
+    }
+
+    private async Task<WorkflowRunProcessResult?> HandleArtifactStateAsync(
+        WorkflowRun run,
+        WorkflowStepRun stepRun,
+        WorkflowRunLease lease,
+        CancellationToken cancellationToken)
+    {
+        var ready = await artifacts.FindReadyByStepAsync(
+            run.WorkspaceId,
+            run.Id,
+            stepRun.Id,
+            cancellationToken);
+
+        if (ready is null)
+        {
+            run.Wait(WorkflowWaitReason.Artifact);
+            return await SaveWaitingAsync(run, lease, cancellationToken);
+        }
+
+        return await CompleteArtifactStepAsync(
+            run, stepRun, ready, lease, cancellationToken);
+    }
+
+    private async Task<WorkflowRunProcessResult?> CompleteArtifactStepAsync(
+        WorkflowRun run,
+        WorkflowStepRun stepRun,
+        Artifact artifact,
+        WorkflowRunLease lease,
+        CancellationToken cancellationToken)
+    {
+        stepRun.Succeed(
+            JsonSerializer.Serialize(new
+            {
+                artifactId = artifact.Id,
+                sizeBytes = artifact.SizeBytes,
+                sha256 = artifact.Sha256
+            }),
+            clock.GetUtcNow());
+        run.SetCurrentStep(null);
+        await AddAuditAsync(
+            run,
+            stepRun,
+            WorkflowAuditEventType.StepSucceeded,
+            cancellationToken);
+        return await SaveAndContinueAsync(run, lease, cancellationToken);
     }
 
     private async Task<WorkflowRunProcessResult?> HandleCheckpointStartAsync(
