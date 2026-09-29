@@ -74,3 +74,21 @@ Before Phase 6A integration:
 - Email/notification delivery and event-driven messaging integration.
 - Additional production artifact providers and retention automation.
 - Operational workflow analytics and SLA dashboards.
+
+## Review hardening (post-6A audit)
+
+An independent review of `fef8143` found and fixed the following. Each has a real-PostgreSQL regression test in `WorkflowPhase6HardeningPostgresTests` or an HTTP contract test in `WorkflowPhase6ContractTests`.
+
+1. **Version activation failed for every second version.** EF issued the new version's `Active` UPDATE before the previous version's retirement, so the partial unique index (one active version per definition) rejected it and the API returned `409`. Retirement is now flushed first, inside the same transaction. Concurrent activation of two drafts leaves exactly one `Active` version.
+2. **Cancelling a run that owned a pending tool execution orphaned the tool.** The store finalized `Waiting`/`Queued` runs directly, leaving an approvable `tool_executions` row. Runs whose active step owns a tool execution now stay `cancellation requested`; the durable queue hands them to the runner, which cancels the tool first.
+3. **Artifact binding was checked outside the insert transaction.** A role demotion, cancellation, or step completion between the service pre-check and the insert could still admit the artifact. The binding (membership, run-as/Admin authority, run `Waiting` on `Artifact`, exact step `WaitingForArtifact`, no cancellation requested, no existing `Ready` artifact) is now revalidated in `TryAddWithinQuotaAsync` under `FOR SHARE` locks on the membership and run rows.
+4. **Idempotency replay disclosed other members' runs.** The key is scoped to workspace + definition, so a second member replaying it received the first member's run. A replay by a different requester is now `409 idempotency_conflict`; a unique-key loss at commit resolves to a replay instead of a generic conflict.
+5. **Audit gap.** Direct cancellation now records both `CancellationRequested` and `RunCancelled`.
+
+Canonical JSON sorts object keys only; number formatting is preserved, so `1` and `1.0` hash differently by design.
+
+### Evidence (2026-09-29, branch `phase-6-workflow-authoring-artifact-execution`)
+
+- Debug and Release backend suites: 496/496 passed each, with `ICEHOTT_POSTGRES_TEST_CONNECTION` set to an isolated `pgvector/pgvector:pg16` container. 74 PostgreSQL-gated tests ran (about 305 s cumulative); without pgvector the same tests fail at migration, which confirms they reach the database. The PostgreSQL tests `return` silently when the variable is unset, so a green run without it proves nothing.
+- `dotnet format --verify-no-changes`, `git diff --check`, Release build (0 warnings) and `dotnet ef migrations has-pending-model-changes` (no schema change) pass.
+- Frontend lint, `tsc --noEmit`, vitest (11/11) and `next build` pass; no frontend change is required because the upload fields are optional additions.

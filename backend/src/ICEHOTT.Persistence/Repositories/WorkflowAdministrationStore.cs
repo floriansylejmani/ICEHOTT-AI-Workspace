@@ -109,6 +109,20 @@ public sealed class WorkflowAdministrationStore(ICEHOTTDbContext db)
                 Guid.NewGuid(), workspaceId, WorkflowAuditEventType.VersionRetired,
                 now, workflowDefinitionId: workflowId, actorUserId: actorUserId,
                 detailJson: $"{{\"versionId\":\"{active.Id}\"}}"));
+
+            // The one-active-version unique index is checked per statement and EF does
+            // not order the two UPDATEs, so the retirement must reach the database
+            // before the new version is activated. Both stay in this transaction.
+            try
+            {
+                await db.SaveChangesAsync(cancellationToken);
+            }
+            catch (DbUpdateException)
+            {
+                await tx.RollbackAsync(CancellationToken.None);
+                db.ChangeTracker.Clear();
+                return new(WorkflowAdministrationPersistenceOutcome.ConcurrencyConflict);
+            }
         }
 
         version.Activate(now);
@@ -181,21 +195,16 @@ public sealed class WorkflowAdministrationStore(ICEHOTTDbContext db)
         var definition = await LockDefinitionAsync(workspaceId, workflowId, cancellationToken);
         if (definition is null)
             return await RollbackAsync(tx, WorkflowAdministrationPersistenceOutcome.WorkflowNotFound);
-        if (definition.Status != WorkflowDefinitionStatus.Active)
-            return await RollbackAsync(tx, WorkflowAdministrationPersistenceOutcome.InvalidState);
         if (membership.Role < definition.MinimumRunRole)
             return await RollbackAsync(tx, WorkflowAdministrationPersistenceOutcome.RunRoleNotAuthorized);
 
-        var existing = await db.WorkflowRuns.SingleOrDefaultAsync(
-            x => x.WorkspaceId == workspaceId &&
-                 x.WorkflowDefinitionId == workflowId &&
-                 x.IdempotencyKey == idempotencyKey, cancellationToken);
+        var existing = await FindRunByKeyAsync(
+            workspaceId, workflowId, idempotencyKey, cancellationToken);
         if (existing is not null)
-        {
-            await tx.RollbackAsync(CancellationToken.None);
-            db.ChangeTracker.Clear();
-            return new(WorkflowAdministrationPersistenceOutcome.IdempotentReplay, Run: existing);
-        }
+            return await ReplayAsync(tx, existing, actorUserId);
+
+        if (definition.Status != WorkflowDefinitionStatus.Active)
+            return await RollbackAsync(tx, WorkflowAdministrationPersistenceOutcome.InvalidState);
 
         var version = await db.WorkflowVersions.SingleOrDefaultAsync(
             x => x.WorkspaceId == workspaceId &&
@@ -213,10 +222,22 @@ public sealed class WorkflowAdministrationStore(ICEHOTTDbContext db)
             now, workflowDefinitionId: workflowId, workflowRunId: run.Id,
             actorUserId: actorUserId));
 
-        return await CommitAsync(tx,
+        var committed = await CommitAsync(tx,
             new(WorkflowAdministrationPersistenceOutcome.Saved,
                 Definition: definition, Version: version, Run: run),
             cancellationToken);
+        if (committed.Outcome != WorkflowAdministrationPersistenceOutcome.ConcurrencyConflict)
+            return committed;
+
+        // A unique-key loss means another request with the same idempotency key
+        // committed first; resolve it as a replay instead of a bare conflict.
+        var winner = await FindRunByKeyAsync(
+            workspaceId, workflowId, idempotencyKey, cancellationToken);
+        return winner is null
+            ? committed
+            : winner.RequestedByUserId == actorUserId
+                ? new(WorkflowAdministrationPersistenceOutcome.IdempotentReplay, Run: winner)
+                : new(WorkflowAdministrationPersistenceOutcome.IdempotencyKeyConflict);
     }
 
     public async Task<WorkflowAdministrationPersistenceResult> CancelRunAsync(
@@ -238,6 +259,11 @@ public sealed class WorkflowAdministrationStore(ICEHOTTDbContext db)
             return await RollbackAsync(tx, WorkflowAdministrationPersistenceOutcome.InvalidState);
 
         run.RequestCancellation(actorUserId, now);
+        db.WorkflowAuditEvents.Add(new WorkflowAuditEvent(
+            Guid.NewGuid(), workspaceId, WorkflowAuditEventType.CancellationRequested,
+            now, workflowDefinitionId: run.WorkflowDefinitionId,
+            workflowRunId: run.Id, actorUserId: actorUserId));
+
         if (run.Status is WorkflowRunStatus.Queued or WorkflowRunStatus.Waiting)
         {
             var activeStep = await db.WorkflowStepRuns
@@ -250,29 +276,31 @@ public sealed class WorkflowAdministrationStore(ICEHOTTDbContext db)
                             x.Status != WorkflowStepRunStatus.OutcomeUnknown)
                 .OrderByDescending(x => x.Attempt)
                 .FirstOrDefaultAsync(cancellationToken);
-            if (activeStep is not null)
-            {
-                activeStep.Cancel(now);
-                var checkpoint = await db.WorkflowCheckpoints.SingleOrDefaultAsync(
-                    x => x.WorkspaceId == workspaceId &&
-                         x.StepRunId == activeStep.Id &&
-                         x.Status == WorkflowCheckpointStatus.Pending,
-                    cancellationToken);
-                checkpoint?.Expire(now);
-            }
 
-            run.Cancel(now);
-            db.WorkflowAuditEvents.Add(new WorkflowAuditEvent(
-                Guid.NewGuid(), workspaceId, WorkflowAuditEventType.RunCancelled,
-                now, workflowDefinitionId: run.WorkflowDefinitionId,
-                workflowRunId: run.Id, actorUserId: actorUserId));
-        }
-        else
-        {
-            db.WorkflowAuditEvents.Add(new WorkflowAuditEvent(
-                Guid.NewGuid(), workspaceId, WorkflowAuditEventType.CancellationRequested,
-                now, workflowDefinitionId: run.WorkflowDefinitionId,
-                workflowRunId: run.Id, actorUserId: actorUserId));
+            // A step that owns a tool execution may have a pending approval or an
+            // in-flight call. Only the runner can cancel that execution durably, so
+            // the cancellation stays requested and the queue hands it to the runner;
+            // finalizing here would leave an approvable tool orphaned from a
+            // cancelled run.
+            if (activeStep?.ToolExecutionId is null)
+            {
+                if (activeStep is not null)
+                {
+                    activeStep.Cancel(now);
+                    var checkpoint = await db.WorkflowCheckpoints.SingleOrDefaultAsync(
+                        x => x.WorkspaceId == workspaceId &&
+                             x.StepRunId == activeStep.Id &&
+                             x.Status == WorkflowCheckpointStatus.Pending,
+                        cancellationToken);
+                    checkpoint?.Expire(now);
+                }
+
+                run.Cancel(now);
+                db.WorkflowAuditEvents.Add(new WorkflowAuditEvent(
+                    Guid.NewGuid(), workspaceId, WorkflowAuditEventType.RunCancelled,
+                    now, workflowDefinitionId: run.WorkflowDefinitionId,
+                    workflowRunId: run.Id, actorUserId: actorUserId));
+            }
         }
 
         return await CommitAsync(tx,
@@ -297,6 +325,27 @@ public sealed class WorkflowAdministrationStore(ICEHOTTDbContext db)
 
         return await RollbackAsync(
             tx, WorkflowAdministrationPersistenceOutcome.RetryNotSupported, run);
+    }
+
+    private Task<WorkflowRun?> FindRunByKeyAsync(
+        Guid workspaceId, Guid workflowId, string idempotencyKey,
+        CancellationToken cancellationToken) =>
+        db.WorkflowRuns.AsNoTracking().SingleOrDefaultAsync(
+            x => x.WorkspaceId == workspaceId &&
+                 x.WorkflowDefinitionId == workflowId &&
+                 x.IdempotencyKey == idempotencyKey, cancellationToken);
+
+    // The key is scoped to workspace + definition, but the run belongs to whoever
+    // created it: another member replaying the key must not read that run back.
+    private async Task<WorkflowAdministrationPersistenceResult> ReplayAsync(
+        Microsoft.EntityFrameworkCore.Storage.IDbContextTransaction transaction,
+        WorkflowRun existing, Guid actorUserId)
+    {
+        await transaction.RollbackAsync(CancellationToken.None);
+        db.ChangeTracker.Clear();
+        return existing.RequestedByUserId == actorUserId
+            ? new(WorkflowAdministrationPersistenceOutcome.IdempotentReplay, Run: existing)
+            : new(WorkflowAdministrationPersistenceOutcome.IdempotencyKeyConflict);
     }
 
     private async Task<WorkspaceMembership?> LockMembershipAsync(
