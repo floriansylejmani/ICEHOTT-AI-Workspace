@@ -15,7 +15,8 @@ public enum WorkflowAdministrationPersistenceOutcome
     RunRoleNotAuthorized = 8,
     InvalidState = 9,
     ConcurrencyConflict = 10,
-    RetryNotSupported = 11
+    RetryNotSupported = 11,
+    IdempotencyKeyConflict = 12
 }
 
 public sealed record WorkflowAdministrationPersistenceResult(

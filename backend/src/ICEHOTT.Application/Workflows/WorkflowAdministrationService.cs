@@ -154,6 +154,7 @@ public sealed class WorkflowAdministrationService(
             WorkflowAdministrationPersistenceOutcome.InvalidState => "invalid_state",
             WorkflowAdministrationPersistenceOutcome.ConcurrencyConflict => "concurrency_conflict",
             WorkflowAdministrationPersistenceOutcome.RetryNotSupported => "run_retry_not_supported",
+            WorkflowAdministrationPersistenceOutcome.IdempotencyKeyConflict => "idempotency_conflict",
             _ => "workflow_operation_failed"
         });
     }

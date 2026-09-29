@@ -11,7 +11,10 @@ public enum ArtifactAddOutcome
     Added = 1,
     QuotaExceeded = 2,
     IdempotencyExists = 3,
-    WorkspaceMissing = 4
+    WorkspaceMissing = 4,
+    BindingNotFound = 5,
+    BindingNotAuthorized = 6,
+    BindingInvalidState = 7
 }
 
 public interface IArtifactRepository

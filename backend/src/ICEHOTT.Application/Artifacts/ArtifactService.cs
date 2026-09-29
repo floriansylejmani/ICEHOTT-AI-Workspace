@@ -227,6 +227,15 @@ public sealed class ArtifactService(
             if (addOutcome == ArtifactAddOutcome.QuotaExceeded)
                 return new(null, "artifact_quota_exceeded");
 
+            if (addOutcome == ArtifactAddOutcome.BindingNotFound)
+                return new(null, "workflow_binding_not_found");
+
+            if (addOutcome == ArtifactAddOutcome.BindingNotAuthorized)
+                return new(null, "forbidden");
+
+            if (addOutcome == ArtifactAddOutcome.BindingInvalidState)
+                return new(null, "workflow_binding_invalid_state");
+
             var existing = normalizedIdempotency is null
                 ? null
                 : await artifacts.FindByIdempotencyKeyAsync(

@@ -1,6 +1,7 @@
 using System.Data;
 using ICEHOTT.Application.Abstractions;
 using ICEHOTT.Domain.Workflows;
+using ICEHOTT.Domain.Workspaces;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
 using Npgsql;
@@ -41,6 +42,10 @@ public sealed class ArtifactRepository(ICEHOTTDbContext db) : IArtifactRepositor
                          x.IdempotencyKey == artifact.IdempotencyKey,
                     cancellationToken))
                 return ArtifactAddOutcome.IdempotencyExists;
+
+            if (await ValidateWorkflowBindingAsync(artifact, cancellationToken)
+                is { } sqliteBinding)
+                return sqliteBinding;
 
             var usage = await GetUsageAsync(
                 artifact.WorkspaceId,
@@ -90,6 +95,13 @@ public sealed class ArtifactRepository(ICEHOTTDbContext db) : IArtifactRepositor
             return ArtifactAddOutcome.IdempotencyExists;
         }
 
+        if (await ValidateWorkflowBindingAsync(artifact, cancellationToken)
+            is { } bindingFailure)
+        {
+            await transaction.RollbackAsync(cancellationToken);
+            return bindingFailure;
+        }
+
         var usageSnapshot = await GetUsageAsync(
             artifact.WorkspaceId,
             cancellationToken);
@@ -106,6 +118,77 @@ public sealed class ArtifactRepository(ICEHOTTDbContext db) : IArtifactRepositor
         await transaction.CommitAsync(cancellationToken);
         return ArtifactAddOutcome.Added;
     }
+    /// <summary>
+    /// Revalidates a workflow-bound artifact inside the insert transaction so a
+    /// concurrent demotion, cancellation, or step completion cannot slip between
+    /// the service pre-check and the insert. Membership and run rows are share-locked
+    /// (PostgreSQL) so writers of those rows serialize against this insert.
+    /// </summary>
+    private async Task<ArtifactAddOutcome?> ValidateWorkflowBindingAsync(
+        Artifact artifact,
+        CancellationToken cancellationToken)
+    {
+        if (artifact.WorkflowRunId is not { } runId ||
+            artifact.StepRunId is not { } stepRunId)
+            return null;
+
+        var workspaceId = artifact.WorkspaceId;
+        var userId = artifact.CreatedByUserId;
+
+        var membership = IsSqlite()
+            ? await db.WorkspaceMemberships.AsNoTracking().SingleOrDefaultAsync(
+                x => x.WorkspaceId == workspaceId && x.UserId == userId,
+                cancellationToken)
+            : await db.WorkspaceMemberships.FromSqlInterpolated(
+                    $"SELECT * FROM workspace_memberships WHERE \"WorkspaceId\" = {workspaceId} AND \"UserId\" = {userId} FOR SHARE")
+                .AsNoTracking()
+                .SingleOrDefaultAsync(cancellationToken);
+        if (membership is null)
+            return ArtifactAddOutcome.WorkspaceMissing;
+
+        var run = IsSqlite()
+            ? await db.WorkflowRuns.AsNoTracking().SingleOrDefaultAsync(
+                x => x.WorkspaceId == workspaceId && x.Id == runId,
+                cancellationToken)
+            : await db.WorkflowRuns.FromSqlInterpolated(
+                    $"SELECT * FROM workflow_runs WHERE \"WorkspaceId\" = {workspaceId} AND \"Id\" = {runId} FOR SHARE")
+                .AsNoTracking()
+                .SingleOrDefaultAsync(cancellationToken);
+        if (run is null)
+            return ArtifactAddOutcome.BindingNotFound;
+
+        var step = await db.WorkflowStepRuns.AsNoTracking().SingleOrDefaultAsync(
+            x => x.WorkspaceId == workspaceId &&
+                 x.WorkflowRunId == runId &&
+                 x.Id == stepRunId,
+            cancellationToken);
+        if (step is null || step.StepType != WorkflowStepType.Artifact)
+            return ArtifactAddOutcome.BindingNotFound;
+
+        if (run.RunAsUserId != userId && membership.Role < WorkspaceRole.Admin)
+            return ArtifactAddOutcome.BindingNotAuthorized;
+
+        if (run.Status != WorkflowRunStatus.Waiting ||
+            run.WaitReason != WorkflowWaitReason.Artifact ||
+            run.CancellationRequestedAtUtc is not null ||
+            step.Status != WorkflowStepRunStatus.WaitingForArtifact ||
+            !string.Equals(run.CurrentStepKey, step.StepKey, StringComparison.Ordinal))
+            return ArtifactAddOutcome.BindingInvalidState;
+
+        // A step that already holds a Ready artifact is satisfied; a second upload
+        // could never be consumed. Pending rows are ignored so an abandoned upload
+        // cannot wedge the step.
+        if (await db.Artifacts.AnyAsync(
+                x => x.WorkspaceId == workspaceId &&
+                     x.WorkflowRunId == runId &&
+                     x.StepRunId == stepRunId &&
+                     x.Status == ArtifactStatus.Ready,
+                cancellationToken))
+            return ArtifactAddOutcome.BindingInvalidState;
+
+        return null;
+    }
+
     public Task<Artifact?> FindAsync(
         Guid workspaceId,
         Guid artifactId,

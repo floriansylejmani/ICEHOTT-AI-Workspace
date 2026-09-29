@@ -77,6 +77,7 @@ public sealed class WorkflowRunMutationsController(
 
             "invalid_state" or
             "concurrency_conflict" or
+            "idempotency_conflict" or
             "run_retry_not_supported" => Conflict(payload),
 
             _ => BadRequest(payload)
