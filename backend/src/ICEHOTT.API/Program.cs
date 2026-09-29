@@ -50,9 +50,10 @@ if (string.IsNullOrWhiteSpace(connectionString))
     throw new InvalidOperationException("ConnectionStrings:DefaultConnection is required.");
 
 var jwt = builder.Configuration.GetSection(JwtOptions.SectionName).Get<JwtOptions>() ?? new JwtOptions();
-// Only the process that serves the API issues and validates tokens; the worker holds no signing key.
-if (serviceRole.ServesHttpApi() && (string.IsNullOrWhiteSpace(jwt.Key) || jwt.Key.Length < 32))
-    throw new InvalidOperationException("Jwt:Key must be configured with at least 32 characters.");
+// Only the process that serves the API holds a token-signing key and browser origins.
+if (ApiStartupRequirements.Validate(
+        builder.Configuration, serviceRole, builder.Environment.IsDevelopment()) is { Count: > 0 } apiRequirementErrors)
+    throw new InvalidOperationException(string.Join(" ", apiRequirementErrors));
 
 var aiRuntime = builder.Configuration.GetSection(AiRuntimeOptions.SectionName).Get<AiRuntimeOptions>() ?? new AiRuntimeOptions();
 if (!Uri.TryCreate(aiRuntime.BaseUrl, UriKind.Absolute, out var aiRuntimeUri))
@@ -65,8 +66,6 @@ if (!Uri.TryCreate(openAiEmbedding.BaseUrl, UriKind.Absolute, out var openAiEmbe
     throw new InvalidOperationException("OpenAiEmbedding:BaseUrl must be an absolute URI.");
 
 var allowedOrigins = builder.Configuration.GetSection("Cors:AllowedOrigins").Get<string[]>() ?? [];
-if (serviceRole.ServesHttpApi() && !builder.Environment.IsDevelopment() && allowedOrigins.Length == 0)
-    throw new InvalidOperationException("Cors:AllowedOrigins must be configured outside Development.");
 
 // Proxy trust only matters to the process serving HTTP traffic; the worker never needs it.
 var forwardedHeaders = serviceRole.ServesHttpApi()
