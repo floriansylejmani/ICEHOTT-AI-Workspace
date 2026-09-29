@@ -41,8 +41,14 @@ services:
     build:
       context: .
       dockerfile: backend/Dockerfile
+      args:
+        GIT_SHA: ${GIT_SHA:-unknown}
+    # Local development only: the production image runs as a non-root user, but a
+    # pre-existing named volume is root-owned. Staging/production never use compose.
+    user: "0:0"
     environment:
       ASPNETCORE_ENVIRONMENT: Development
+      Service__Role: All
       ConnectionStrings__DefaultConnection: Host=postgres;Port=5432;Database=${POSTGRES_DB:-icehott};Username=${POSTGRES_USER:-icehott};Password=${POSTGRES_PASSWORD:-change-me}
       Jwt__Key: ${JWT_SECRET_KEY:-ICEHOTT-development-only-key-never-use-in-production-2026}
       Cors__AllowedOrigins__0: http://localhost:3000

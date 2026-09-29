@@ -104,3 +104,34 @@ jobs:
 
       - name: Test
         run: pytest -q
+
+  release-foundation:
+    runs-on: ubuntu-latest
+    env:
+      GIT_SHA: ${{ github.sha }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+
+      - name: Validate deployment definitions
+        run: |
+          pip install pyyaml
+          python scripts/release/validate_deploy_config.py
+
+      - name: Shell script syntax
+        run: |
+          for script in scripts/release/*.sh; do bash -n "$script"; done
+
+      - name: Build production API image
+        run: docker build -f backend/Dockerfile --build-arg GIT_SHA="$GIT_SHA" -t icehott-api:"$GIT_SHA" .
+
+      - name: Build migration bundle image
+        run: docker build -f backend/Dockerfile --build-arg GIT_SHA="$GIT_SHA" --target migrator -t icehott-migrator:"$GIT_SHA" .
+
+      - name: Build AI image
+        run: docker build -f ai/icehott-ai-service/Dockerfile -t icehott-ai:"$GIT_SHA" .
+
+      - name: Verify images (non-root, fail-closed, migrations, API/worker roles)
+        run: bash scripts/release/verify-container.sh icehott-api:"$GIT_SHA" icehott-migrator:"$GIT_SHA" "$GIT_SHA"

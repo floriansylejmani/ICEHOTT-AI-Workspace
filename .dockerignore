@@ -12,3 +12,7 @@
 *.user
 *.suo
 .env
+.worktrees
+artifacts
+**/TestResults
+docs
