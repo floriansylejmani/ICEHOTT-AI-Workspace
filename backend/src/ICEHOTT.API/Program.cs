@@ -2,6 +2,7 @@ using System.Text;
 using System.Text.Json.Serialization;
 using System.Threading.RateLimiting;
 using ICEHOTT.API.Background;
+using ICEHOTT.API.Hosting;
 using ICEHOTT.API.Services;
 using ICEHOTT.Application.Abstractions;
 using ICEHOTT.Application.Agents;
@@ -24,6 +25,25 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 
 var builder = WebApplication.CreateBuilder(args);
+
+// Fail closed before anything else is built: unsafe staging/production configuration
+// stops startup with messages that name keys, never values.
+try
+{
+    ProductionConfigurationValidator.Enforce(
+        builder.Configuration, builder.Environment.EnvironmentName);
+}
+catch (ProductionConfigurationException exception)
+{
+    // Messages name keys and problem categories only; exit non-zero without a stack trace.
+    Console.Error.WriteLine(exception.Message);
+    return 1;
+}
+var productionLike = ProductionConfigurationValidator.IsProductionLike(
+    builder.Configuration, builder.Environment.EnvironmentName);
+var serviceRole = ServiceRoles.Resolve(builder.Configuration, requireExplicit: productionLike);
+var releaseInfo = ReleaseInfo.Create(
+    builder.Configuration, builder.Environment.EnvironmentName, serviceRole);
 
 var connectionString = builder.Configuration.GetConnectionString("DefaultConnection");
 if (string.IsNullOrWhiteSpace(connectionString))
@@ -65,6 +85,9 @@ var artifactStorage = builder.Configuration
     .Get<ArtifactStorageOptions>() ?? new ArtifactStorageOptions();
 if (string.IsNullOrWhiteSpace(artifactStorage.RootPath))
     throw new InvalidOperationException("ArtifactStorage:RootPath is required.");
+if (!string.Equals(artifactStorage.Provider, "Local", StringComparison.OrdinalIgnoreCase))
+    throw new InvalidOperationException(
+        "ArtifactStorage:Provider is not supported by this build; only the Local provider exists until the object-storage phase.");
 
 var workflowScheduler = builder.Configuration
     .GetSection(WorkflowSchedulerOptions.SectionName)
@@ -196,13 +219,9 @@ var promotionRequirements = RagPromotionRequirements.ProviderBenchmarkDefault wi
 builder.Services.AddSingleton(promotionRequirements);
 builder.Services.AddSingleton<RagPromotionPolicy>();
 
-if (knowledgeWorker.Enabled)
-    builder.Services.AddHostedService<KnowledgeIngestionWorker>();
-if (artifactStorage.MaintenanceEnabled)
-    builder.Services.AddHostedService<ArtifactMaintenanceWorker>();
-builder.Services.AddHostedService<ToolExecutionRecoveryWorker>();
-builder.Services.AddHostedService<WorkflowRunnerWorker>();
-builder.Services.AddHostedService<WorkflowSchedulerWorker>();
+builder.Services.AddSingleton(releaseInfo);
+BackgroundServiceRegistration.Add(
+    builder.Services, serviceRole, knowledgeWorker, artifactStorage);
 
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer(options => options.TokenValidationParameters = new TokenValidationParameters
@@ -255,76 +274,80 @@ app.UseCors();
 app.UseRateLimiter();
 app.UseAuthentication();
 app.UseAuthorization();
-app.MapControllers();
+if (serviceRole.ServesHttpApi())
+    app.MapControllers();
 app.MapHealthChecks("/health");
-app.MapGet("/ready", async (
-    ICEHOTTDbContext db,
-    IAiRuntimeClient aiRuntimeClient,
-    IServingEmbeddingProfileResolver servingProfileResolver,
-    IEmbeddingProviderRegistry providerRegistry,
-    IVectorStore vectorStore,
-    CancellationToken cancellationToken) =>
-{
-    var databaseReady = await db.Database.CanConnectAsync(cancellationToken);
-    var aiReady = await aiRuntimeClient.IsReadyAsync(cancellationToken);
-
-    EmbeddingProfileDescriptor? activeProfile = null;
-    var embeddingProfileReady = false;
-    var embeddingProviderReady = false;
-
-    if (databaseReady)
+app.MapGet("/release", (ReleaseInfo release) => Results.Ok(release));
+if (serviceRole.ServesHttpApi())
+    app.MapGet("/ready", async (
+        ICEHOTTDbContext db,
+        IAiRuntimeClient aiRuntimeClient,
+        IServingEmbeddingProfileResolver servingProfileResolver,
+        IEmbeddingProviderRegistry providerRegistry,
+        IVectorStore vectorStore,
+        CancellationToken cancellationToken) =>
     {
-        try
-        {
-            activeProfile = await servingProfileResolver.ResolveAsync(cancellationToken);
-            embeddingProfileReady = await vectorStore.IsProfileReadyAsync(
-                activeProfile, cancellationToken);
+        var databaseReady = await db.Database.CanConnectAsync(cancellationToken);
+        var aiReady = await aiRuntimeClient.IsReadyAsync(cancellationToken);
 
-            var provider = providerRegistry.Resolve(activeProfile.Provider);
-            embeddingProviderReady =
-                provider is IEmbeddingProviderConfigurationProbe probe &&
-                probe.IsConfigured(activeProfile);
-        }
-        catch (InvalidOperationException)
-        {
-            // No Active profile exists; readiness flags stay false.
-        }
-        catch (EmbeddingProviderException)
-        {
-            // Provider is unavailable or not registered.
-        }
-    }
+        EmbeddingProfileDescriptor? activeProfile = null;
+        var embeddingProfileReady = false;
+        var embeddingProviderReady = false;
 
-    var profileKey = activeProfile?.Key ?? "none";
-
-    return databaseReady &&
-           aiReady &&
-           embeddingProfileReady &&
-           embeddingProviderReady
-        ? Results.Ok(new
+        if (databaseReady)
         {
-            status = "ready",
-            service = "icehott-api",
-            database = "ready",
-            aiRuntime = "ready",
-            embeddingProfile = profileKey,
-            embeddingProfileReady = true,
-            embeddingProviderReady = true
-        })
-        : Results.Json(
-            new
+            try
             {
-                status = "not_ready",
+                activeProfile = await servingProfileResolver.ResolveAsync(cancellationToken);
+                embeddingProfileReady = await vectorStore.IsProfileReadyAsync(
+                    activeProfile, cancellationToken);
+
+                var provider = providerRegistry.Resolve(activeProfile.Provider);
+                embeddingProviderReady =
+                    provider is IEmbeddingProviderConfigurationProbe probe &&
+                    probe.IsConfigured(activeProfile);
+            }
+            catch (InvalidOperationException)
+            {
+                // No Active profile exists; readiness flags stay false.
+            }
+            catch (EmbeddingProviderException)
+            {
+                // Provider is unavailable or not registered.
+            }
+        }
+
+        var profileKey = activeProfile?.Key ?? "none";
+
+        return databaseReady &&
+               aiReady &&
+               embeddingProfileReady &&
+               embeddingProviderReady
+            ? Results.Ok(new
+            {
+                status = "ready",
                 service = "icehott-api",
-                database = databaseReady ? "ready" : "unavailable",
-                aiRuntime = aiReady ? "ready" : "unavailable",
+                database = "ready",
+                aiRuntime = "ready",
                 embeddingProfile = profileKey,
-                embeddingProfileReady,
-                embeddingProviderReady
-            },
-            statusCode: StatusCodes.Status503ServiceUnavailable);
-});
+                embeddingProfileReady = true,
+                embeddingProviderReady = true
+            })
+            : Results.Json(
+                new
+                {
+                    status = "not_ready",
+                    service = "icehott-api",
+                    database = databaseReady ? "ready" : "unavailable",
+                    aiRuntime = aiReady ? "ready" : "unavailable",
+                    embeddingProfile = profileKey,
+                    embeddingProfileReady,
+                    embeddingProviderReady
+                },
+                statusCode: StatusCodes.Status503ServiceUnavailable);
+    });
 
 app.Run();
+return 0;
 
 public partial class Program;
