@@ -49,6 +49,38 @@ public sealed class ReleaseInfoTests
         Assert.Equal("unknown", info.GitSha);
     }
 
+    [Theory]
+    [InlineData("staging")]
+    [InlineData("production")]
+    public void Hosted_Tiers_Only_Report_A_Full_Sha(string tier)
+    {
+        var shortSha = ReleaseInfo.Create(
+            Config(("Release:GitSha", "c63a6b2"), ("Deployment:Tier", tier)),
+            "Production", ServiceRole.Api);
+        Assert.Equal("unknown", shortSha.GitSha);
+
+        var full = ReleaseInfo.Create(
+            Config(("Release:GitSha", Sha), ("Deployment:Tier", tier)),
+            "Production", ServiceRole.Api);
+        Assert.Equal(Sha, full.GitSha);
+    }
+
+    [Fact]
+    public void Local_Builds_May_Report_An_Abbreviated_Sha() =>
+        Assert.Equal(
+            "c63a6b2",
+            ReleaseInfo.Create(
+                Config(("Release:GitSha", "c63a6b2")), "Development", ServiceRole.Api).GitSha);
+
+    [Theory]
+    [InlineData("c63a6b2337a1e17c056d5adbefc1daba83e8abf1", true)]
+    [InlineData("C63A6B2337A1E17C056D5ADBEFC1DABA83E8ABF1", true)]
+    [InlineData("c63a6b2", false)]
+    [InlineData("c63a6b2337a1e17c056d5adbefc1daba83e8abf12", false)]
+    [InlineData(null, false)]
+    public void Full_Sha_Means_Exactly_Forty_Hex_Characters(string? value, bool expected) =>
+        Assert.Equal(expected, ReleaseInfo.IsFullSha(value));
+
     [Fact]
     public void Sha_Is_Normalised_To_Lower_Case() =>
         Assert.Equal(

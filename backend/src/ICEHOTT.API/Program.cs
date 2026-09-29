@@ -50,7 +50,8 @@ if (string.IsNullOrWhiteSpace(connectionString))
     throw new InvalidOperationException("ConnectionStrings:DefaultConnection is required.");
 
 var jwt = builder.Configuration.GetSection(JwtOptions.SectionName).Get<JwtOptions>() ?? new JwtOptions();
-if (string.IsNullOrWhiteSpace(jwt.Key) || jwt.Key.Length < 32)
+// Only the process that serves the API issues and validates tokens; the worker holds no signing key.
+if (serviceRole.ServesHttpApi() && (string.IsNullOrWhiteSpace(jwt.Key) || jwt.Key.Length < 32))
     throw new InvalidOperationException("Jwt:Key must be configured with at least 32 characters.");
 
 var aiRuntime = builder.Configuration.GetSection(AiRuntimeOptions.SectionName).Get<AiRuntimeOptions>() ?? new AiRuntimeOptions();
@@ -64,9 +65,13 @@ if (!Uri.TryCreate(openAiEmbedding.BaseUrl, UriKind.Absolute, out var openAiEmbe
     throw new InvalidOperationException("OpenAiEmbedding:BaseUrl must be an absolute URI.");
 
 var allowedOrigins = builder.Configuration.GetSection("Cors:AllowedOrigins").Get<string[]>() ?? [];
-if (!builder.Environment.IsDevelopment() && allowedOrigins.Length == 0)
+if (serviceRole.ServesHttpApi() && !builder.Environment.IsDevelopment() && allowedOrigins.Length == 0)
     throw new InvalidOperationException("Cors:AllowedOrigins must be configured outside Development.");
 
+// Proxy trust only matters to the process serving HTTP traffic; the worker never needs it.
+var forwardedHeaders = serviceRole.ServesHttpApi()
+    ? ForwardedHeadersSetup.BuildOptions(builder.Configuration)
+    : null;
 var autoMigrate = builder.Configuration.GetValue<bool>("Database:AutoMigrate");
 var authRateLimitPermit = Math.Clamp(
     builder.Configuration.GetValue<int?>("RateLimiting:AuthPermitLimit") ?? 10,
@@ -223,18 +228,26 @@ builder.Services.AddSingleton(releaseInfo);
 BackgroundServiceRegistration.Add(
     builder.Services, serviceRole, knowledgeWorker, artifactStorage);
 
-builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
-    .AddJwtBearer(options => options.TokenValidationParameters = new TokenValidationParameters
-    {
-        ValidateIssuer = true,
-        ValidIssuer = jwt.Issuer,
-        ValidateAudience = true,
-        ValidAudience = jwt.Audience,
-        ValidateLifetime = true,
-        ValidateIssuerSigningKey = true,
-        IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwt.Key)),
-        ClockSkew = TimeSpan.Zero
-    });
+if (serviceRole.ServesHttpApi())
+{
+    builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
+        .AddJwtBearer(options => options.TokenValidationParameters = new TokenValidationParameters
+        {
+            ValidateIssuer = true,
+            ValidIssuer = jwt.Issuer,
+            ValidateAudience = true,
+            ValidAudience = jwt.Audience,
+            ValidateLifetime = true,
+            ValidateIssuerSigningKey = true,
+            IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwt.Key)),
+            ClockSkew = TimeSpan.Zero
+        });
+}
+else
+{
+    // The worker serves no authenticated routes and holds no signing key.
+    builder.Services.AddAuthentication();
+}
 builder.Services.AddAuthorization();
 builder.Services.AddRateLimiter(options =>
 {
@@ -267,6 +280,10 @@ if (autoMigrate)
     var db = scope.ServiceProvider.GetRequiredService<ICEHOTTDbContext>();
     await db.Database.MigrateAsync();
 }
+
+// Must run first: rate limiting and the HTTPS decision both read the forwarded client address/scheme.
+if (forwardedHeaders is not null)
+    app.UseForwardedHeaders(forwardedHeaders);
 
 if (app.Environment.IsDevelopment()) app.MapOpenApi();
 app.UseHttpsRedirection();

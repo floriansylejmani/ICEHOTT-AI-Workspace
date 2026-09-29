@@ -25,7 +25,9 @@ public sealed class ProductionConfigurationValidatorTests
         ["ArtifactStorage:Provider"] = "S3",
         ["ObjectStorage:Endpoint"] = "https://objects.example",
         ["ObjectStorage:Bucket"] = "icehott-prod-artifacts",
-        ["Release:GitSha"] = "c63a6b2337a1e17c056d5adbefc1daba83e8abf1"
+        ["Release:GitSha"] = "c63a6b2337a1e17c056d5adbefc1daba83e8abf1",
+        ["ForwardedHeaders:Enabled"] = "true",
+        ["ForwardedHeaders:TrustedNetworks:0"] = "10.0.0.0/8"
     };
 
     private static IConfiguration Config(Dictionary<string, string?> values) =>
@@ -221,6 +223,96 @@ public sealed class ProductionConfigurationValidatorTests
         values["Service:Role"] = "Worker";
         values.Remove("Cors:AllowedOrigins:0");
         values.Remove("AllowedHosts");
+        Assert.Empty(Validate(values));
+    }
+
+    [Theory]
+    [InlineData("abc1234")]
+    [InlineData("c63a6b2337a1e17c056d5adbefc1daba83e8abf")]
+    [InlineData("c63a6b2337a1e17c056d5adbefc1daba83e8abf12")]
+    [InlineData("c63a6b2337a1e17c056d5adbefc1daba83e8abf1c63a6b2337a1e17c056d5adb")]
+    [InlineData("c63a6b2337a1e17c056d5adbefc1daba83e8abfg")]
+    public void Hosted_Release_Requires_The_Exact_Full_Git_Sha(string sha)
+    {
+        var values = Safe();
+        values["Release:GitSha"] = sha;
+        Assert.Contains(Validate(values), x => x.StartsWith("Release:GitSha"));
+    }
+
+    [Fact]
+    public void Hosted_Release_Accepts_A_Full_Upper_Case_Sha()
+    {
+        var values = Safe();
+        values["Release:GitSha"] = "C63A6B2337A1E17C056D5ADBEFC1DABA83E8ABF1";
+        Assert.Empty(Validate(values));
+    }
+
+    [Fact]
+    public void Worker_Does_Not_Require_Jwt_Signing_Material()
+    {
+        var values = Safe();
+        values["Service:Role"] = "Worker";
+        values.Remove("Jwt:Key");
+        Assert.Empty(Validate(values));
+    }
+
+    [Fact]
+    public void Worker_Still_Rejects_A_Present_But_Unsafe_Jwt_Key_Only_When_Api()
+    {
+        var values = Safe();
+        values["Jwt:Key"] = "";
+        Assert.Contains(Validate(values), x => x.StartsWith("Jwt:Key"));
+    }
+
+    [Fact]
+    public void Worker_Still_Requires_Database_And_Ai_Runtime()
+    {
+        var values = Safe();
+        values["Service:Role"] = "Worker";
+        values.Remove("ConnectionStrings:DefaultConnection");
+        values.Remove("AiRuntime:BaseUrl");
+        var errors = Validate(values);
+        Assert.Contains(errors, x => x.StartsWith("ConnectionStrings:DefaultConnection"));
+        Assert.Contains(errors, x => x.StartsWith("AiRuntime:BaseUrl"));
+    }
+
+    [Fact]
+    public void Api_Requires_Forwarded_Headers_From_Explicit_Trusted_Networks()
+    {
+        var values = Safe();
+        values.Remove("ForwardedHeaders:Enabled");
+        Assert.Contains(Validate(values), x => x.StartsWith("ForwardedHeaders:Enabled"));
+
+        values = Safe();
+        values["ForwardedHeaders:Enabled"] = "false";
+        Assert.Contains(Validate(values), x => x.StartsWith("ForwardedHeaders:Enabled"));
+
+        values = Safe();
+        values.Remove("ForwardedHeaders:TrustedNetworks:0");
+        Assert.Contains(Validate(values), x => x.StartsWith("ForwardedHeaders:TrustedNetworks"));
+    }
+
+    [Theory]
+    [InlineData("0.0.0.0/0")]
+    [InlineData("::/0")]
+    [InlineData("10.0.0.0")]
+    [InlineData("10.0.0.0/33")]
+    [InlineData("not-a-network/8")]
+    [InlineData("")]
+    public void Trusted_Networks_Must_Be_Valid_And_Not_The_Whole_Internet(string network)
+    {
+        var values = Safe();
+        values["ForwardedHeaders:TrustedNetworks:0"] = network;
+        Assert.Contains(Validate(values), x => x.StartsWith("ForwardedHeaders:TrustedNetworks"));
+    }
+
+    [Fact]
+    public void Worker_Does_Not_Require_Forwarded_Headers()
+    {
+        var values = Safe();
+        values["Service:Role"] = "Worker";
+        values.Remove("ForwardedHeaders:Enabled");
+        values.Remove("ForwardedHeaders:TrustedNetworks:0");
         Assert.Empty(Validate(values));
     }
 

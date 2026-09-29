@@ -45,6 +45,16 @@ public sealed class ProductionAppSettingsTests
     }
 
     [Fact]
+    public void Production_Defaults_Enable_Proxy_Trust_But_Never_Ship_A_Trusted_Network()
+    {
+        var config = Load();
+        Assert.True(config.GetValue<bool>("ForwardedHeaders:Enabled"));
+        Assert.Equal(1, config.GetValue<int>("ForwardedHeaders:ForwardLimit"));
+        // The proxy network is platform specific and must be supplied by the operator.
+        Assert.Empty(config.GetSection("ForwardedHeaders:TrustedNetworks").GetChildren());
+    }
+
+    [Fact]
     public void Production_Defaults_Contain_No_Secrets_Or_Origins()
     {
         var config = Load();

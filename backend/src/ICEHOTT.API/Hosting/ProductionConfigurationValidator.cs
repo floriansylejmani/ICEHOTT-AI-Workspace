@@ -54,15 +54,19 @@ public static class ProductionConfigurationValidator
 
         ValidateRole(configuration, errors, out var role);
         ValidateRelease(configuration, errors);
-        ValidateJwt(configuration, errors);
         ValidateDatabase(configuration, errors);
         ValidateAiRuntime(configuration, errors);
         ValidateArtifactStorage(configuration, errors);
 
+        // Token signing, browser origins, host filtering and proxy trust only matter to the
+        // process that serves the public HTTP API. The worker exposes none of that, so it is
+        // neither required to hold the JWT signing key nor to know the web origins.
         if (role is not "worker")
         {
+            ValidateJwt(configuration, errors);
             ValidateCors(configuration, errors);
             ValidateAllowedHosts(configuration, errors);
+            ValidateForwardedHeaders(configuration, errors);
         }
 
         return errors;
@@ -90,8 +94,8 @@ public static class ProductionConfigurationValidator
 
     private static void ValidateRelease(IConfiguration configuration, List<string> errors)
     {
-        if (!ReleaseInfo.IsValidSha(configuration["Release:GitSha"]?.Trim()))
-            errors.Add("Release:GitSha: must be the deployed commit SHA (7-64 hexadecimal characters).");
+        if (!ReleaseInfo.IsFullSha(configuration["Release:GitSha"]?.Trim()))
+            errors.Add("Release:GitSha: must be the exact deployed commit SHA (40 hexadecimal characters).");
     }
 
     private static void ValidateJwt(IConfiguration configuration, List<string> errors)
@@ -207,6 +211,19 @@ public static class ProductionConfigurationValidator
                 return;
             }
         }
+    }
+
+    private static void ValidateForwardedHeaders(IConfiguration configuration, List<string> errors)
+    {
+        if (!ForwardedHeadersSetup.IsEnabled(configuration))
+            errors.Add("ForwardedHeaders:Enabled: must be true behind the platform proxy; otherwise every client shares the proxy address and the per-IP rate limit collapses into one bucket.");
+
+        var networks = configuration.GetSection($"{ForwardedHeadersSetup.Section}:TrustedNetworks")
+            .GetChildren().Select(x => x.Value).ToArray();
+        if (networks.Length == 0)
+            errors.Add("ForwardedHeaders:TrustedNetworks: at least one proxy network (CIDR) must be configured.");
+        else if (networks.Any(x => !ForwardedHeadersSetup.TryParseNetwork(x, out _)))
+            errors.Add("ForwardedHeaders:TrustedNetworks: every entry must be a valid CIDR network narrower than /0.");
     }
 
     private static void ValidateAllowedHosts(IConfiguration configuration, List<string> errors)
