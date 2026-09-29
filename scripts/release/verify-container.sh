@@ -90,21 +90,25 @@ common_env=(
   -e "Release__GitSha=$expected_sha"
   -e "ConnectionStrings__DefaultConnection=$connection"
   -e Database__RequireTransportSecurity=false
-  -e "Jwt__Key=$jwt_key"
   -e AiRuntime__BaseUrl=http://icehott-ai.internal:8000
   -e ArtifactStorage__Provider=Local
   -e ProductionSafety__AllowLocalArtifactStorage=true
+)
+# Only the API holds token-signing material, browser origins, host filtering and proxy trust;
+# the worker below is deliberately started WITHOUT any of them.
+api_only_env=(
+  -e "Jwt__Key=$jwt_key"
   -e Cors__AllowedOrigins__0=https://app.verify.test
   -e "AllowedHosts=$public_host"
+  -e ForwardedHeaders__Enabled=true
+  -e ForwardedHeaders__TrustedNetworks__0=10.0.0.0/8
 )
-docker run -d --name "$api_name" --network "$network" -p 127.0.0.1::8080 \
-  "${common_env[@]}" -e Service__Role=Api "$api_image" >/dev/null
-docker run -d --name "$worker_name" --network "$network" -p 127.0.0.1::8080 \
-  "${common_env[@]}" -e Service__Role=Worker "$api_image" >/dev/null
+docker run -d --name "$api_name" --network "$network" -p 127.0.0.1::8080   "${common_env[@]}" "${api_only_env[@]}" -e Service__Role=Api "$api_image" >/dev/null
+docker run -d --name "$worker_name" --network "$network" -p 127.0.0.1::8080   "${common_env[@]}" -e Service__Role=Worker "$api_image" >/dev/null
 
 port_of() { docker port "$1" 8080/tcp | head -n1 | sed 's/.*://'; }
 HOST_HEADER="$public_host" "$here/smoke.sh" "http://127.0.0.1:$(port_of "$api_name")" "$expected_sha"
-HOST_HEADER="$public_host" "$here/smoke.sh" "http://127.0.0.1:$(port_of "$worker_name")" "$expected_sha"
+"$here/smoke.sh" "http://127.0.0.1:$(port_of "$worker_name")" "$expected_sha"
 
 api_logs="$(docker logs "$api_name" 2>&1)"
 worker_logs="$(docker logs "$worker_name" 2>&1)"
@@ -116,6 +120,6 @@ done
 worker_code="$(curl -sS -o /dev/null -w '%{http_code}' -H "Host: $public_host" \
   "http://127.0.0.1:$(port_of "$worker_name")/api/auth/login" -X POST)"
 [[ "$worker_code" == "404" ]] || fail "the Worker role serves API routes (HTTP $worker_code)"
-echo "   api: no workers started; worker: all durable workers started, API routes 404"
+echo "   api: no workers started; worker: started without JWT/CORS/proxy settings, all durable workers running, API routes 404"
 
 echo "verify-container: PASS"

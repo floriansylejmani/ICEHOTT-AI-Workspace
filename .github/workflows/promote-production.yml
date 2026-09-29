@@ -1,12 +1,23 @@
 name: Promote Production
 
-# Manual, explicit promotion of an ALREADY TESTED release. Nothing is rebuilt: the images
-# published for the commit during the staging deployment (tagged with the full Git SHA)
-# are migrated and deployed as-is. The run only proceeds for a commit that
+# Manual, explicit promotion of an ALREADY TESTED release.
+#
+# Container images (API/worker, migration bundle, AI runtime) are NOT rebuilt: the images
+# published for the commit during the staging deployment, tagged with the full Git SHA,
+# are migrated and deployed as-is, and each image's revision label is checked against the SHA.
+#
+# The web app IS rebuilt. Next.js inlines NEXT_PUBLIC_* values (for example the API URL)
+# at build time and staging and production necessarily differ, so a binary-identical
+# promotion of the web bundle is not possible. The guarantee is weaker but exact: the SAME
+# commit, built with a pinned Vercel CLI and a frozen lockfile (npm ci via apps/web/vercel.json),
+# whose staging build was produced from that commit as well.
+#
+# The run only proceeds for a commit that
 #   - is reachable from main,
 #   - passed CI,
-#   - was deployed to and smoke-tested on staging (commit status "deploy/staging"),
-#   - has published images for that exact SHA.
+#   - was deployed to and smoke-tested on staging (commit status "deploy/staging" created by
+#     GitHub Actions),
+#   - has published images for that exact SHA whose revision label matches it.
 # The production GitHub Environment must require reviewers; that approval gates the
 # migrate and deploy jobs. Mutable tags such as "latest" are never accepted.
 
@@ -75,14 +86,26 @@ jobs:
           python3 - "$statuses" <<'PY'
           import json, sys
           rows = [r for r in json.loads(sys.argv[1]) if r.get("context") == "deploy/staging"]
+          # Newest first. Only a status written by GitHub Actions counts, so a status posted
+          # with a personal token cannot stand in for a real staging deployment.
           if not rows or rows[0].get("state") != "success":
               sys.exit("The commit has no successful staging deployment record.")
+          if (rows[0].get("creator") or {}).get("login") != "github-actions[bot]":
+              sys.exit("The staging record was not created by GitHub Actions.")
           PY
           owner="$(tr '[:upper:]' '[:lower:]' <<<"$OWNER")"
           printf '%s' "$GH_TOKEN" | docker login "$REGISTRY" -u "$GITHUB_ACTOR" --password-stdin
           for image in icehott-api icehott-migrator icehott-ai; do
             docker manifest inspect "$REGISTRY/$owner/$image:$INPUT_SHA" >/dev/null \
               || { echo "Missing published image $image for this SHA." >&2; exit 1; }
+          done
+          # A tag alone is not proof of provenance: the image must say it was built from this commit.
+          for image in icehott-api icehott-migrator; do
+            docker pull -q "$REGISTRY/$owner/$image:$INPUT_SHA" >/dev/null
+            revision="$(docker inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$REGISTRY/$owner/$image:$INPUT_SHA")"
+            if [[ "$revision" != "$INPUT_SHA" ]]; then
+              echo "Image $image is tagged with this SHA but was not built from it." >&2; exit 1
+            fi
           done
           echo "sha=$INPUT_SHA" >> "$GITHUB_OUTPUT"
           echo "Promoting $INPUT_SHA (already built, tested and staged)." >> "$GITHUB_STEP_SUMMARY"
@@ -106,7 +129,7 @@ jobs:
           set -euo pipefail
           owner="$(tr '[:upper:]' '[:lower:]' <<<"$OWNER")"
           printf '%s' "$REGISTRY_TOKEN" | docker login "$REGISTRY" -u "$GITHUB_ACTOR" --password-stdin
-          docker run --rm "$REGISTRY/$owner/icehott-migrator:$SHA" --connection "$MIGRATION_CONNECTION" >/dev/null
+          docker run --rm "$REGISTRY/$owner/icehott-migrator:$SHA" --connection "$MIGRATION_CONNECTION"
           echo "Production migrated with the bundle built from $SHA." >> "$GITHUB_STEP_SUMMARY"
 
   deploy:
@@ -157,11 +180,17 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           node-version: 24
-      - name: Build and deploy the production deployment from the tested commit
+      - name: Require a public HTTPS API URL (a missing value silently falls back to localhost)
         working-directory: apps/web
         run: |
           set -euo pipefail
           npx --yes vercel@61.0.0 pull --yes --environment=production --token "$VERCEL_TOKEN"
+          grep -Eq '^NEXT_PUBLIC_API_URL="?https://' .vercel/.env.production.local \
+            || { echo "NEXT_PUBLIC_API_URL must be set to an https URL for the production environment." >&2; exit 1; }
+      - name: Build (same commit, pinned CLI, npm ci) and deploy the production deployment
+        working-directory: apps/web
+        run: |
+          set -euo pipefail
           npx --yes vercel@61.0.0 build --prod --token "$VERCEL_TOKEN"
           npx --yes vercel@61.0.0 deploy --prebuilt --prod --token "$VERCEL_TOKEN" >/dev/null
 

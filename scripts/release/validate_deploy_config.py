@@ -111,7 +111,7 @@ def check_ci() -> None:
         if needle not in backend_text:
             fail(f"ci.yml: backend job no longer runs '{needle}'")
     release_text = yaml.safe_dump(jobs.get("release-foundation", {}), width=100000)
-    for needle in ("validate_deploy_config.py", "verify-container.sh", "--target migrator"):
+    for needle in ("validate_deploy_config.py", "verify-container.sh", "--target migrator", "test-smoke.sh"):
         if needle not in release_text:
             fail(f"ci.yml: release-foundation job must run '{needle}'")
 
@@ -176,6 +176,13 @@ def check_production() -> None:
         fail("promote-production.yml: smoke must depend on deploy")
     if "docker build" in text:
         fail("promote-production.yml: must not rebuild images; it promotes the staged ones")
+    if re.search(r"nothing is rebuilt", text, re.IGNORECASE):
+        fail("promote-production.yml: must not claim 'nothing is rebuilt'; the web app is rebuilt per tier")
+    if "web app IS rebuilt" not in text:
+        fail("promote-production.yml: must state the truthful web rebuild contract")
+    for needle in ("github-actions[bot]", "org.opencontainers.image.revision"):
+        if needle not in text:
+            fail(f"promote-production.yml: provenance check '{needle}' is missing")
     for needle in ("deploy/staging", "docker manifest inspect", "merge-base --is-ancestor"):
         if needle not in text:
             fail(f"promote-production.yml: verification is missing '{needle}'")
@@ -208,7 +215,27 @@ def check_repository() -> None:
         if entry not in ignore:
             fail(f".dockerignore: '{entry}' must be excluded from the build context")
 
-    for script in ("smoke.sh", "verify-container.sh", "deploy-railway.sh"):
+    for name in ("deploy-staging.yml", "promote-production.yml"):
+        text = (WORKFLOWS / name).read_text(encoding="utf-8")
+        for line in text.splitlines():
+            if "icehott-migrator" in line and "--connection" in line and "/dev/null" in line:
+                fail(f"{name}: migration output must not be discarded (failures would be undiagnosable)")
+        for match in re.finditer(r"vercel@([^\s]+)", text):
+            if not re.fullmatch(r"\d+\.\d+\.\d+", match.group(1)):
+                fail(f"{name}: Vercel CLI must be pinned to an exact version, found '{match.group(0)}'")
+        if "NEXT_PUBLIC_API_URL" not in text:
+            fail(f"{name}: web deployment must verify NEXT_PUBLIC_API_URL is an https URL")
+
+    vercel = ROOT / "apps" / "web" / "vercel.json"
+    if not vercel.exists() or '"installCommand": "npm ci"' not in vercel.read_text(encoding="utf-8"):
+        fail("apps/web/vercel.json: must freeze dependencies with installCommand 'npm ci'")
+
+    railway = (ROOT / "scripts" / "release" / "deploy-railway.sh").read_text(encoding="utf-8")
+    for needle in ("Project-Access-Token", "LIVE PROVIDER VERIFICATION REQUIRED", "--fail"):
+        if needle not in railway:
+            fail(f"scripts/release/deploy-railway.sh: missing '{needle}'")
+
+    for script in ("smoke.sh", "test-smoke.sh", "verify-container.sh", "deploy-railway.sh"):
         if not (ROOT / "scripts" / "release" / script).exists():
             fail(f"scripts/release/{script}: missing")
 

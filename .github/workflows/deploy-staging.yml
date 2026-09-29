@@ -147,7 +147,7 @@ jobs:
           set -euo pipefail
           owner="$(tr '[:upper:]' '[:lower:]' <<<"$OWNER")"
           printf '%s' "$REGISTRY_TOKEN" | docker login "$REGISTRY" -u "$GITHUB_ACTOR" --password-stdin
-          docker run --rm "$REGISTRY/$owner/icehott-migrator:$SHA" --connection "$MIGRATION_CONNECTION" >/dev/null
+          docker run --rm "$REGISTRY/$owner/icehott-migrator:$SHA" --connection "$MIGRATION_CONNECTION"
           echo "Staging migrated with the bundle built from $SHA." >> "$GITHUB_STEP_SUMMARY"
 
   deploy:
@@ -200,13 +200,20 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           node-version: 24
-      # The web app is built from the same locked sources at the exact tested commit. It
-      # has no schema coupling, so it is the one artifact rebuilt (not re-pulled) per tier.
-      - name: Build and deploy the preview (staging) deployment
+      # Next.js inlines NEXT_PUBLIC_* at build time and staging/production differ, so the web
+      # bundle is built per tier from the SAME commit with a pinned CLI and a frozen lockfile
+      # (npm ci via apps/web/vercel.json). It is not promoted as a binary.
+      - name: Require a public HTTPS API URL (a missing value silently falls back to localhost)
         working-directory: apps/web
         run: |
           set -euo pipefail
           npx --yes vercel@61.0.0 pull --yes --environment=preview --token "$VERCEL_TOKEN"
+          grep -Eq '^NEXT_PUBLIC_API_URL="?https://' .vercel/.env.preview.local \
+            || { echo "NEXT_PUBLIC_API_URL must be set to an https URL for the preview (staging) environment." >&2; exit 1; }
+      - name: Build and deploy the preview (staging) deployment
+        working-directory: apps/web
+        run: |
+          set -euo pipefail
           npx --yes vercel@61.0.0 build --token "$VERCEL_TOKEN"
           npx --yes vercel@61.0.0 deploy --prebuilt --token "$VERCEL_TOKEN" >/dev/null
 

@@ -6,10 +6,13 @@
 # Environment:
 #   HOST_HEADER          optional Host header (when AllowedHosts is restricted)
 #   SMOKE_REQUIRE_READY  "true" also requires GET /ready = 200 (API role only)
-#   SMOKE_ATTEMPTS       health attempts, 2 s apart (default 30)
+#   SMOKE_ATTEMPTS       polling attempts (default 90)
+#   SMOKE_INTERVAL       seconds between attempts (default 2)
 #
-# Fails (non-zero) if the instance is not live or is not running the expected release.
-# Prints only status codes and the public release fields; never response secrets.
+# During a rolling deploy the previous release keeps answering until the new one is
+# healthy, so the check polls until the instance is live AND reports the expected release.
+# It fails (non-zero) if that does not happen within the window. It prints only status codes
+# and the public release fields, never response bodies.
 set -euo pipefail
 
 base_url="${1:?usage: smoke.sh <base-url> <expected-git-sha>}"
@@ -27,38 +30,56 @@ if [[ -n "${HOST_HEADER:-}" ]]; then
 fi
 
 status_of() {
-  curl "${curl_args[@]}" -o /dev/null -w '%{http_code}' "$base_url$1" || echo "000"
+  local code
+  code="$(curl "${curl_args[@]}" -o /dev/null -w '%{http_code}' "$base_url$1" 2>/dev/null)" || true
+  echo "${code:-000}"
 }
 
-attempts="${SMOKE_ATTEMPTS:-30}"
+field_of() {
+  # $1 = json, $2 = field name (flat string fields only)
+  printf '%s' "$1" | sed -n "s/.*\"$2\":\"\([^\"]*\)\".*/\1/p"
+}
+
+attempts="${SMOKE_ATTEMPTS:-90}"
+interval="${SMOKE_INTERVAL:-2}"
+last="not live"
+service=""
+environment=""
+actual_sha=""
+
 for ((i = 1; i <= attempts; i++)); do
-  code="$(status_of /health)"
-  if [[ "$code" == "200" ]]; then
-    break
+  if [[ "$(status_of /health)" == "200" ]]; then
+    release_json="$(curl "${curl_args[@]}" --fail "$base_url/release" 2>/dev/null)" || release_json=""
+    actual_sha="$(field_of "$release_json" gitSha)"
+    service="$(field_of "$release_json" service)"
+    environment="$(field_of "$release_json" environment)"
+    if [[ "$actual_sha" == "$expected_sha" ]]; then
+      last="ok"
+      break
+    fi
+    last="live but reporting release '${actual_sha:-unavailable}'"
+  else
+    last="not live"
   fi
-  if ((i == attempts)); then
-    echo "smoke: /health returned $code after $attempts attempts" >&2
-    exit 1
-  fi
-  sleep 2
+  ((i < attempts)) && sleep "$interval"
 done
-echo "smoke: /health = 200"
 
-release_json="$(curl "${curl_args[@]}" --fail "$base_url/release")"
-actual_sha="$(printf '%s' "$release_json" | sed -n 's/.*"gitSha":"\([^"]*\)".*/\1/p')"
-service="$(printf '%s' "$release_json" | sed -n 's/.*"service":"\([^"]*\)".*/\1/p')"
-environment="$(printf '%s' "$release_json" | sed -n 's/.*"environment":"\([^"]*\)".*/\1/p')"
-
-if [[ "$actual_sha" != "$expected_sha" ]]; then
-  echo "smoke: release mismatch: service=$service reports '$actual_sha', expected '$expected_sha'" >&2
+if [[ "$last" != "ok" ]]; then
+  echo "smoke: expected release $expected_sha not serving after $attempts attempts ($last)" >&2
   exit 1
 fi
+echo "smoke: /health = 200"
 echo "smoke: /release ok service=$service environment=$environment gitSha=$actual_sha"
 
 if [[ "${SMOKE_REQUIRE_READY:-false}" == "true" ]]; then
-  code="$(status_of /ready)"
-  if [[ "$code" != "200" ]]; then
-    echo "smoke: /ready returned $code" >&2
+  ready="000"
+  for ((i = 1; i <= attempts; i++)); do
+    ready="$(status_of /ready)"
+    [[ "$ready" == "200" ]] && break
+    ((i < attempts)) && sleep "$interval"
+  done
+  if [[ "$ready" != "200" ]]; then
+    echo "smoke: /ready returned $ready" >&2
     exit 1
   fi
   echo "smoke: /ready = 200"

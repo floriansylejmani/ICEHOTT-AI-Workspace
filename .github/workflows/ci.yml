@@ -124,6 +124,9 @@ jobs:
         run: |
           for script in scripts/release/*.sh; do bash -n "$script"; done
 
+      - name: Smoke check behaviour (rolling deploy, wrong release, dead service)
+        run: bash scripts/release/test-smoke.sh
+
       - name: Build production API image
         run: docker build -f backend/Dockerfile --build-arg GIT_SHA="$GIT_SHA" -t icehott-api:"$GIT_SHA" .
 
