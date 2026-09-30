@@ -1,0 +1,73 @@
+# ICEHOTT OpenTelemetry Collector - local / staging baseline (Phase 7C).
+#
+# Receives OTLP (gRPC 4317, HTTP 4318) from the API, Worker and AI service and:
+#   * prints telemetry with the debug exporter (local verification),
+#   * exposes metrics for Prometheus scraping on :8889.
+#
+# No credentials live here. To forward to a hosted backend, add collector.upstream.yaml as a
+# second --config and supply OTEL_UPSTREAM_ENDPOINT / OTEL_UPSTREAM_HEADERS from the platform
+# secret store (see docs/PHASE-7C-OBSERVABILITY-ALERTING.md).
+
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  # Bounds collector memory so a telemetry burst can never exhaust the host.
+  memory_limiter:
+    check_interval: 1s
+    limit_mib: 256
+    spike_limit_mib: 64
+  batch:
+    timeout: 5s
+    send_batch_size: 512
+  # Defense in depth: strip anything payload-shaped that an SDK may have let through.
+  attributes/redact:
+    actions:
+      - key: http.request.header.authorization
+        action: delete
+      - key: http.request.header.cookie
+        action: delete
+      - key: db.statement
+        action: delete
+      - key: db.query.text
+        action: delete
+      - key: db.user
+        action: delete
+      - key: db.connection_string
+        action: delete
+      - key: url.query
+        action: delete
+
+exporters:
+  debug:
+    verbosity: ${env:OTEL_DEBUG_VERBOSITY:-basic}
+  prometheus:
+    endpoint: 0.0.0.0:8889
+    # Resource attributes stay in target_info; they are not copied onto every series.
+    resource_to_telemetry_conversion:
+      enabled: false
+
+extensions:
+  health_check:
+    endpoint: 0.0.0.0:13133
+
+service:
+  extensions: [health_check]
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [memory_limiter, attributes/redact, batch]
+      exporters: [debug]
+    metrics:
+      receivers: [otlp]
+      processors: [memory_limiter, batch]
+      exporters: [debug, prometheus]
+    logs:
+      receivers: [otlp]
+      processors: [memory_limiter, attributes/redact, batch]
+      exporters: [debug]

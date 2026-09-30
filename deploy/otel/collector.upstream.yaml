@@ -1,0 +1,39 @@
+# Optional overlay: also forward to an OTLP/HTTP backend. Use as a second --config:
+#   otelcol-contrib --config=collector.yaml --config=collector.upstream.yaml
+#
+# The endpoint and headers come from environment variables injected by the platform secret store:
+#   OTEL_UPSTREAM_ENDPOINT   e.g. https://otlp.example.com
+#   OTEL_UPSTREAM_HEADERS    never committed; provider specific (for example an API key header)
+# Nothing provider specific or secret is stored in this repository.
+
+exporters:
+  otlphttp/upstream:
+    endpoint: ${env:OTEL_UPSTREAM_ENDPOINT}
+    headers:
+      x-icehott-upstream-auth: ${env:OTEL_UPSTREAM_HEADERS}
+    timeout: 10s
+    # Bounded, non-blocking: a slow or dead backend drops data instead of exerting backpressure.
+    sending_queue:
+      enabled: true
+      num_consumers: 2
+      queue_size: 1000
+    retry_on_failure:
+      enabled: true
+      initial_interval: 5s
+      max_interval: 30s
+      max_elapsed_time: 120s
+
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [memory_limiter, attributes/redact, batch]
+      exporters: [debug, otlphttp/upstream]
+    metrics:
+      receivers: [otlp]
+      processors: [memory_limiter, batch]
+      exporters: [debug, prometheus, otlphttp/upstream]
+    logs:
+      receivers: [otlp]
+      processors: [memory_limiter, attributes/redact, batch]
+      exporters: [debug, otlphttp/upstream]

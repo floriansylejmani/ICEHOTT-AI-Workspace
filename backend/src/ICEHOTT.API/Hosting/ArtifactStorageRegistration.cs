@@ -27,7 +27,11 @@ public static class ArtifactStorageRegistration
                 throw new InvalidOperationException(
                     "ArtifactStorage:RootPath is required for the Local provider.");
 
-            services.AddSingleton<IArtifactStore, LocalArtifactStore>();
+            services.AddSingleton<LocalArtifactStore>();
+            services.AddSingleton<IArtifactStore>(provider =>
+                new InstrumentedArtifactStore(
+                    provider.GetRequiredService<LocalArtifactStore>(),
+                    "local"));
             return services;
         }
 
@@ -63,7 +67,11 @@ public static class ArtifactStorageRegistration
                 clientConfig);
         });
 
-        services.AddSingleton<IArtifactStore, S3ArtifactStore>();
+        services.AddSingleton<S3ArtifactStore>();
+        services.AddSingleton<IArtifactStore>(provider =>
+            new InstrumentedArtifactStore(
+                provider.GetRequiredService<S3ArtifactStore>(),
+                "s3"));
         return services;
     }
 

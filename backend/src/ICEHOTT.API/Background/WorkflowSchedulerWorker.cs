@@ -1,4 +1,5 @@
 using ICEHOTT.Application.Abstractions;
+using ICEHOTT.Application.Observability;
 using ICEHOTT.Application.Workflows;
 using Microsoft.Extensions.Options;
 
@@ -81,6 +82,7 @@ public sealed class WorkflowSchedulerWorker(
             }
             catch (Exception exception)
             {
+                IcehottMetrics.SchedulerLoopFailures.Add(1);
                 logger.LogError(
                     exception,
                     "Workflow scheduler loop failed.");
@@ -92,6 +94,10 @@ public sealed class WorkflowSchedulerWorker(
     private void LogResult(
         WorkflowTriggerSchedulerResult result)
     {
+        IcehottMetrics.SchedulerActions.Add(
+            1,
+            IcehottMetrics.Tag("disposition", result.Disposition.ToString().ToLowerInvariant()));
+
         if (result.Disposition ==
             WorkflowTriggerSchedulerDisposition.Failed)
         {

@@ -58,6 +58,7 @@ public static class ProductionConfigurationValidator
         ValidateDatabase(configuration, errors);
         ValidateAiRuntime(configuration, errors);
         ValidateArtifactStorage(configuration, errors);
+        errors.AddRange(ObservabilityOptions.Validate(configuration, hosted: true));
 
         // Token signing, browser origins, host filtering and proxy trust only matter to the
         // process that serves the public HTTP API. The worker exposes none of that, so it is

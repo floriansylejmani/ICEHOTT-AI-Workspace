@@ -211,3 +211,35 @@ jobs:
 
       - name: Verify images (non-root, fail-closed, migrations, API/worker roles)
         run: bash scripts/release/verify-container.sh icehott-api:"$GIT_SHA" icehott-migrator:"$GIT_SHA" "$GIT_SHA"
+
+  observability:
+    runs-on: ubuntu-latest
+    env:
+      # Pinned by digest: deterministic local configuration, no external SaaS account.
+      OTEL_COLLECTOR_IMAGE: otel/opentelemetry-collector-contrib@sha256:45392d534c1edcc809c2d112394029246bc679d2ae5ea7081414a1fc74f2c621
+      PROMETHEUS_IMAGE: prom/prometheus:v3.5.0
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Validate OpenTelemetry Collector configuration
+        run: |
+          docker run --rm -v "$PWD/deploy/otel:/cfg:ro" "$OTEL_COLLECTOR_IMAGE" \
+            validate --config=/cfg/collector.yaml
+          docker run --rm -e OTEL_UPSTREAM_ENDPOINT=https://otlp.example.invalid -e OTEL_UPSTREAM_HEADERS=ci \
+            -v "$PWD/deploy/otel:/cfg:ro" "$OTEL_COLLECTOR_IMAGE" \
+            validate --config=/cfg/collector.yaml --config=/cfg/collector.upstream.yaml
+
+      - name: Validate alert and recording rules
+        run: |
+          docker run --rm --entrypoint promtool -v "$PWD/deploy/otel/alerts:/r:ro" "$PROMETHEUS_IMAGE" \
+            check rules /r/icehott-rules.yml
+          docker run --rm --entrypoint promtool -v "$PWD/deploy/otel/alerts:/r:ro" "$PROMETHEUS_IMAGE" \
+            test rules /r/icehott-rules.test.yml
+
+      - name: Validate compose files and script syntax
+        run: |
+          docker compose -f docker-compose.yml -f docker-compose.observability.yml config --quiet
+          bash -n scripts/observability/verify-trace.sh
+
+      - name: Verify API -> AI -> Collector trace propagation and collector-outage tolerance
+        run: bash scripts/observability/verify-trace.sh

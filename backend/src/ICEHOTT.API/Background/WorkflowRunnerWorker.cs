@@ -1,4 +1,5 @@
 using ICEHOTT.Application.Abstractions;
+using ICEHOTT.Application.Observability;
 using ICEHOTT.Application.Workflows;
 using Microsoft.Extensions.Options;
 
@@ -58,6 +59,7 @@ public sealed class WorkflowRunnerWorker(
             }
             catch (Exception exception)
             {
+                IcehottMetrics.WorkflowRunnerLoopFailures.Add(1);
                 logger.LogError(exception, "Workflow runner loop failed.");
                 await Task.Delay(pollDelay, stoppingToken);
             }
@@ -94,12 +96,17 @@ public sealed class WorkflowRunnerWorker(
 
             if (result.Disposition == WorkflowRunProcessDisposition.LeaseLost)
             {
+                IcehottMetrics.WorkflowRunsProcessed.Add(1, IcehottMetrics.Tag("outcome", "lease_lost"));
                 logger.LogWarning(
                     "Workflow run {RunId} lost lease generation {LeaseGeneration} before commit.",
                     lease.RunId,
                     lease.LeaseGeneration);
                 return;
             }
+
+            IcehottMetrics.WorkflowRunsProcessed.Add(
+                1,
+                IcehottMetrics.Tag("outcome", result.Disposition.ToString().ToLowerInvariant()));
 
             logger.LogInformation(
                 "Workflow run {RunId} processor yielded {Disposition} with status {Status}.",
@@ -114,6 +121,7 @@ public sealed class WorkflowRunnerWorker(
             heartbeatCts.Cancel();
             await IgnoreCancellationAsync(heartbeat);
 
+            IcehottMetrics.WorkflowRunsProcessed.Add(1, IcehottMetrics.Tag("outcome", "lease_lost"));
             logger.LogWarning(
                 "Workflow run {RunId} processing stopped after lease ownership was lost.",
                 lease.RunId);

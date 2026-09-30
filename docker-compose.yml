@@ -6,7 +6,7 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-icehott}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change-me}
     ports:
-      - "5432:5432"
+      - "${POSTGRES_PORT:-5432}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -18,7 +18,7 @@ services:
   redis:
     image: redis:7-alpine
     ports:
-      - "6379:6379"
+      - "${REDIS_PORT:-6379}:6379"
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -30,7 +30,7 @@ services:
       context: .
       dockerfile: ai/icehott-ai-service/Dockerfile
     ports:
-      - "8000:8000"
+      - "${AI_PORT:-8000}:8000"
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
       interval: 5s
@@ -58,7 +58,7 @@ services:
       OpenAiEmbedding__ApiKey: ${OPENAI_API_KEY:-}
       ArtifactStorage__RootPath: /app/data/artifacts
     ports:
-      - "5050:8080"
+      - "${API_PORT:-5050}:8080"
     volumes:
       - artifact_data:/app/data/artifacts
     depends_on:

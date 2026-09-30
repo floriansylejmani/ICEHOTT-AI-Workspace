@@ -9,6 +9,7 @@ using ICEHOTT.Application.Agents;
 using ICEHOTT.Application.Artifacts;
 using ICEHOTT.Application.Auth;
 using ICEHOTT.Application.Knowledge;
+using ICEHOTT.Application.Observability;
 using ICEHOTT.Application.Tools;
 using ICEHOTT.Application.Workflows;
 using ICEHOTT.Application.Workspaces;
@@ -44,6 +45,12 @@ var productionLike = ProductionConfigurationValidator.IsProductionLike(
 var serviceRole = ServiceRoles.Resolve(builder.Configuration, requireExplicit: productionLike);
 var releaseInfo = ReleaseInfo.Create(
     builder.Configuration, builder.Environment.EnvironmentName, serviceRole);
+
+// Hosted tiers are validated fail-closed above; outside them telemetry is opt-in and only checked when enabled.
+if (!productionLike &&
+    ObservabilityOptions.Validate(builder.Configuration, hosted: false) is { Count: > 0 } observabilityErrors)
+    throw new InvalidOperationException(string.Join(" ", observabilityErrors));
+builder.AddIcehottObservability(releaseInfo);
 
 var connectionString = builder.Configuration.GetConnectionString("DefaultConnection");
 if (string.IsNullOrWhiteSpace(connectionString))
@@ -304,6 +311,14 @@ if (serviceRole.ServesHttpApi())
     {
         var databaseReady = await db.Database.CanConnectAsync(cancellationToken);
         var aiReady = await aiRuntimeClient.IsReadyAsync(cancellationToken);
+        IcehottMetrics.ReadinessChecks.Add(
+            1,
+            IcehottMetrics.Tag("component", "database"),
+            IcehottMetrics.Tag("outcome", databaseReady ? "ok" : "failed"));
+        IcehottMetrics.ReadinessChecks.Add(
+            1,
+            IcehottMetrics.Tag("component", "ai_runtime"),
+            IcehottMetrics.Tag("outcome", aiReady ? "ok" : "failed"));
 
         EmbeddingProfileDescriptor? activeProfile = null;
         var embeddingProfileReady = false;
