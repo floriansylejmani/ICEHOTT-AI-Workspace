@@ -1,3 +1,4 @@
+using ICEHOTT.Infrastructure.Artifacts;
 using Npgsql;
 
 namespace ICEHOTT.API.Hosting;
@@ -175,7 +176,12 @@ public static class ProductionConfigurationValidator
             return;
         }
 
-        var allowLocal = Flag(configuration, "ProductionSafety:AllowLocalArtifactStorage", false, errors);
+        var allowLocal = Flag(
+            configuration,
+            "ProductionSafety:AllowLocalArtifactStorage",
+            false,
+            errors);
+
         if (string.Equals(provider, "Local", StringComparison.OrdinalIgnoreCase))
         {
             if (!allowLocal)
@@ -183,10 +189,36 @@ public static class ProductionConfigurationValidator
             return;
         }
 
-        if (string.IsNullOrWhiteSpace(configuration["ObjectStorage:Endpoint"]))
-            errors.Add("ObjectStorage:Endpoint: is required for the configured artifact provider.");
-        if (string.IsNullOrWhiteSpace(configuration["ObjectStorage:Bucket"]))
-            errors.Add("ObjectStorage:Bucket: is required for the configured artifact provider.");
+        if (!string.Equals(provider, "S3", StringComparison.OrdinalIgnoreCase))
+        {
+            errors.Add("ArtifactStorage:Provider: must be one of the supported providers: Local or S3.");
+            return;
+        }
+
+        var endpoint = configuration["ObjectStorage:Endpoint"]?.Trim();
+        if (!Uri.TryCreate(endpoint, UriKind.Absolute, out var endpointUri) ||
+            endpointUri.Scheme != Uri.UriSchemeHttps ||
+            endpointUri.IsLoopback ||
+            LoopbackHosts.Contains(endpointUri.Host, StringComparer.OrdinalIgnoreCase) ||
+            !string.IsNullOrEmpty(endpointUri.UserInfo))
+            errors.Add("ObjectStorage:Endpoint: must be an explicit non-loopback HTTPS endpoint without embedded credentials.");
+
+        if (!ObjectStorageOptions.IsValidBucketName(configuration["ObjectStorage:Bucket"]))
+            errors.Add("ObjectStorage:Bucket: must be a valid private S3 bucket name.");
+
+        if (string.IsNullOrWhiteSpace(configuration["ObjectStorage:Region"]))
+            errors.Add("ObjectStorage:Region: is required.");
+
+        if (string.IsNullOrWhiteSpace(configuration["ObjectStorage:AccessKeyId"]))
+            errors.Add("ObjectStorage:AccessKeyId: is required.");
+
+        if (string.IsNullOrWhiteSpace(configuration["ObjectStorage:SecretAccessKey"]))
+            errors.Add("ObjectStorage:SecretAccessKey: is required.");
+
+        if (!ObjectStorageOptions.TryNormalizePrefix(
+                configuration["ObjectStorage:Prefix"],
+                out _))
+            errors.Add("ObjectStorage:Prefix: is invalid.");
     }
 
     private static void ValidateCors(IConfiguration configuration, List<string> errors)

@@ -164,6 +164,10 @@ public sealed class ArtifactService(
         {
             return new(null, "artifact_storage_failed");
         }
+        catch (ArtifactStoreUnavailableException)
+        {
+            return new(null, "artifact_storage_unavailable");
+        }
         catch (IOException)
         {
             return new(null, "artifact_storage_unavailable");
@@ -277,6 +281,10 @@ public sealed class ArtifactService(
                 cancellationToken);
             return new(null, "artifact_storage_failed");
         }
+        catch (ArtifactStoreUnavailableException)
+        {
+            return new(Map(artifact), "artifact_storage_unavailable");
+        }
         catch (IOException)
         {
             return new(Map(artifact), "artifact_storage_unavailable");
@@ -363,6 +371,10 @@ public sealed class ArtifactService(
         {
             return new(null, "artifact_integrity_failed");
         }
+        catch (ArtifactStoreUnavailableException)
+        {
+            return new(null, "artifact_storage_unavailable");
+        }
         catch (IOException)
         {
             return new(null, "artifact_storage_unavailable");
@@ -440,6 +452,9 @@ public sealed class ArtifactService(
                 await unitOfWork.SaveChangesAsync(cancellationToken);
             }
         }
+        catch (ArtifactStoreUnavailableException)
+        {
+        }
         catch (IOException)
         {
         }
@@ -465,6 +480,9 @@ public sealed class ArtifactService(
                 cancellationToken);
             artifact.MarkStagingCleaned();
         }
+        catch (ArtifactStoreUnavailableException)
+        {
+        }
         catch (IOException)
         {
         }
@@ -487,6 +505,9 @@ public sealed class ArtifactService(
             await store.DeleteStagingAsync(
                 stagingKey,
                 cancellationToken);
+        }
+        catch (ArtifactStoreUnavailableException)
+        {
         }
         catch (IOException)
         {

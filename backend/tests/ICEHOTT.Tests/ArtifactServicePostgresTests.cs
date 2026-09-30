@@ -16,7 +16,7 @@ using Npgsql;
 
 namespace ICEHOTT.Tests;
 
-public sealed class ArtifactServicePostgresTests
+public sealed partial class ArtifactServicePostgresTests
 {
     private const string Phase5CMigration =
         "20260926154306_Phase5CDurableRunner";
@@ -639,7 +639,7 @@ public sealed class ArtifactServicePostgresTests
 
     private static ArtifactService CreateService(
         ICEHOTTDbContext db,
-        LocalArtifactStore store,
+        IArtifactStore store,
         ArtifactPolicy policy,
         TimeProvider clock) =>
         new(
@@ -654,7 +654,7 @@ public sealed class ArtifactServicePostgresTests
 
     private static ArtifactMaintenanceService CreateMaintenance(
         ICEHOTTDbContext db,
-        LocalArtifactStore store,
+        IArtifactStore store,
         ArtifactPolicy policy,
         TimeProvider clock) =>
         new(

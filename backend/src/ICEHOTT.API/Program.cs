@@ -87,11 +87,6 @@ var knowledgeWorker = builder.Configuration
 var artifactStorage = builder.Configuration
     .GetSection(ArtifactStorageOptions.SectionName)
     .Get<ArtifactStorageOptions>() ?? new ArtifactStorageOptions();
-if (string.IsNullOrWhiteSpace(artifactStorage.RootPath))
-    throw new InvalidOperationException("ArtifactStorage:RootPath is required.");
-if (!string.Equals(artifactStorage.Provider, "Local", StringComparison.OrdinalIgnoreCase))
-    throw new InvalidOperationException(
-        "ArtifactStorage:Provider is not supported by this build; only the Local provider exists until the object-storage phase.");
 
 var workflowScheduler = builder.Configuration
     .GetSection(WorkflowSchedulerOptions.SectionName)
@@ -124,13 +119,17 @@ builder.Services.Configure<KnowledgeWorkerOptions>(
     builder.Configuration.GetSection(KnowledgeWorkerOptions.SectionName));
 builder.Services.Configure<ArtifactStorageOptions>(
     builder.Configuration.GetSection(ArtifactStorageOptions.SectionName));
+builder.Services.Configure<ObjectStorageOptions>(
+    builder.Configuration.GetSection(ObjectStorageOptions.SectionName));
 builder.Services.AddSingleton(artifactPolicy);
 builder.Services.AddSingleton(
     new WorkflowSchedulerPolicy(
         TimeSpan.FromMinutes(workflowScheduler.MinimumIntervalMinutes),
         workflowScheduler.MaxActiveTriggersPerWorkspace));
 builder.Services.AddSingleton<IWorkflowScheduleCalculator, WorkflowScheduleCalculator>();
-builder.Services.AddSingleton<IArtifactStore, LocalArtifactStore>();
+builder.Services.AddArtifactStore(
+    builder.Configuration,
+    artifactStorage);
 
 builder.Services.AddDbContext<ICEHOTTDbContext>(options => options.UseNpgsql(connectionString));
 builder.Services.AddScoped<IUserRepository, UserRepository>();

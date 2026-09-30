@@ -61,6 +61,13 @@ public sealed class ProductionAppSettingsTests
         Assert.True(string.IsNullOrEmpty(config["Jwt:Key"]));
         Assert.True(string.IsNullOrEmpty(config["ConnectionStrings:DefaultConnection"]));
         Assert.True(string.IsNullOrEmpty(config["OpenAiEmbedding:ApiKey"]));
+        Assert.True(string.IsNullOrEmpty(config["ObjectStorage:Endpoint"]));
+        Assert.True(string.IsNullOrEmpty(config["ObjectStorage:Bucket"]));
+        Assert.True(string.IsNullOrEmpty(config["ObjectStorage:AccessKeyId"]));
+        Assert.True(string.IsNullOrEmpty(config["ObjectStorage:SecretAccessKey"]));
+        Assert.Equal("us-east-1", config["ObjectStorage:Region"]);
+        Assert.True(config.GetValue<bool>("ObjectStorage:ForcePathStyle"));
+        Assert.Equal(string.Empty, config["ObjectStorage:Prefix"]);
         Assert.Empty(config.GetSection("Cors:AllowedOrigins").GetChildren());
 
         var raw = File.ReadAllText(Path.Combine(ApiProjectDirectory(), "appsettings.Production.json"));
