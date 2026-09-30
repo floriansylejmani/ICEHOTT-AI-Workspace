@@ -4,6 +4,7 @@ public sealed class ArtifactStorageOptions
 {
     public const string SectionName = "ArtifactStorage";
 
+    public string Provider { get; init; } = "Local";
     public string RootPath { get; init; } = "data/artifacts";
     public long MaxArtifactBytes { get; init; } = 25L * 1024 * 1024;
     public long MaxWorkspaceBytes { get; init; } = 500L * 1024 * 1024;

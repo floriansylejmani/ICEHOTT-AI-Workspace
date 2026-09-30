@@ -1,0 +1,246 @@
+name: Deploy Staging
+
+# Builds the exact commit that passed CI on main, validates the release images and the
+# migration bundle, and (only when staging deployment is enabled) publishes immutable
+# images tagged with the full Git SHA, migrates staging, deploys and smoke-tests it.
+#
+# Without the repository variable ICEHOTT_DEPLOY_STAGING=true the workflow is a DRY RUN:
+# it builds and verifies everything but publishes nothing and deploys nothing, and it
+# says so in the job summary. It never reports a deployment that did not happen.
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      git_sha:
+        description: Full 40-character commit SHA on main that already passed CI
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-staging
+  cancel-in-progress: false
+
+env:
+  REGISTRY: ghcr.io
+
+jobs:
+  resolve:
+    name: Resolve tested commit
+    runs-on: ubuntu-latest
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push')
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      sha: ${{ steps.resolve.outputs.sha }}
+      deploy_enabled: ${{ steps.resolve.outputs.deploy_enabled }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - name: Resolve and verify the commit
+        id: resolve
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          RUN_SHA: ${{ github.event.workflow_run.head_sha }}
+          INPUT_SHA: ${{ inputs.git_sha }}
+          DEPLOY_ENABLED: ${{ vars.ICEHOTT_DEPLOY_STAGING }}
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          if [[ "$EVENT_NAME" == "workflow_dispatch" ]]; then sha="$INPUT_SHA"; else sha="$RUN_SHA"; fi
+          if ! [[ "$sha" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "A full lowercase 40-character commit SHA is required." >&2
+            exit 1
+          fi
+          git fetch --no-tags origin main
+          if ! git merge-base --is-ancestor "$sha" origin/main; then
+            echo "Commit is not reachable from main; refusing to deploy an arbitrary revision." >&2
+            exit 1
+          fi
+          ci_runs="$(curl -fsS -H "Authorization: Bearer $GH_TOKEN" \
+            "https://api.github.com/repos/$REPO/actions/workflows/ci.yml/runs?head_sha=$sha&status=success&per_page=1")"
+          if ! grep -q '"total_count": *[1-9]' <<<"$ci_runs"; then
+            echo "No successful CI run exists for this commit." >&2
+            exit 1
+          fi
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          if [[ "$DEPLOY_ENABLED" == "true" ]]; then enabled=true; else enabled=false; fi
+          echo "deploy_enabled=$enabled" >> "$GITHUB_OUTPUT"
+
+  build:
+    name: Build, verify and publish release images
+    needs: resolve
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    env:
+      SHA: ${{ needs.resolve.outputs.sha }}
+      DEPLOY_ENABLED: ${{ needs.resolve.outputs.deploy_enabled }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.resolve.outputs.sha }}
+
+      - name: Build API image (Api and Worker roles)
+        run: docker build -f backend/Dockerfile --build-arg GIT_SHA="$SHA" -t icehott-api:"$SHA" .
+
+      - name: Build migration bundle image
+        run: docker build -f backend/Dockerfile --build-arg GIT_SHA="$SHA" --target migrator -t icehott-migrator:"$SHA" .
+
+      - name: Build AI image
+        run: docker build -f ai/icehott-ai-service/Dockerfile -t icehott-ai:"$SHA" .
+
+      - name: Verify images (non-root, fail-closed, migrations, roles)
+        run: bash scripts/release/verify-container.sh icehott-api:"$SHA" icehott-migrator:"$SHA" "$SHA"
+
+      - name: Publish immutable images
+        if: env.DEPLOY_ENABLED == 'true'
+        env:
+          REGISTRY_TOKEN: ${{ github.token }}
+          OWNER: ${{ github.repository_owner }}
+        run: |
+          set -euo pipefail
+          owner="$(tr '[:upper:]' '[:lower:]' <<<"$OWNER")"
+          printf '%s' "$REGISTRY_TOKEN" | docker login "$REGISTRY" -u "$GITHUB_ACTOR" --password-stdin
+          for image in icehott-api icehott-migrator icehott-ai; do
+            docker tag "$image:$SHA" "$REGISTRY/$owner/$image:$SHA"
+            docker push "$REGISTRY/$owner/$image:$SHA"
+          done
+
+      - name: Summary
+        run: |
+          if [[ "$DEPLOY_ENABLED" == "true" ]]; then
+            echo "Published icehott-{api,migrator,ai}:$SHA to $REGISTRY." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "DRY RUN: images built and verified for $SHA. Nothing was published or deployed (set repository variable ICEHOTT_DEPLOY_STAGING=true to enable)." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+  migrate:
+    name: Migrate staging database
+    needs: [resolve, build]
+    if: needs.resolve.outputs.deploy_enabled == 'true'
+    runs-on: ubuntu-latest
+    environment: staging
+    permissions:
+      contents: read
+      packages: read
+    env:
+      SHA: ${{ needs.resolve.outputs.sha }}
+      OWNER: ${{ github.repository_owner }}
+      REGISTRY_TOKEN: ${{ github.token }}
+      MIGRATION_CONNECTION: ${{ secrets.STAGING_MIGRATION_CONNECTION }}
+    steps:
+      - name: Run the version-pinned migration bundle
+        run: |
+          set -euo pipefail
+          owner="$(tr '[:upper:]' '[:lower:]' <<<"$OWNER")"
+          printf '%s' "$REGISTRY_TOKEN" | docker login "$REGISTRY" -u "$GITHUB_ACTOR" --password-stdin
+          docker run --rm "$REGISTRY/$owner/icehott-migrator:$SHA" --connection "$MIGRATION_CONNECTION"
+          echo "Staging migrated with the bundle built from $SHA." >> "$GITHUB_STEP_SUMMARY"
+
+  deploy:
+    name: Deploy staging services
+    needs: [resolve, build, migrate]
+    if: needs.resolve.outputs.deploy_enabled == 'true'
+    runs-on: ubuntu-latest
+    environment: staging
+    permissions:
+      contents: read
+    env:
+      SHA: ${{ needs.resolve.outputs.sha }}
+      OWNER: ${{ github.repository_owner }}
+      RAILWAY_API_TOKEN: ${{ secrets.RAILWAY_API_TOKEN }}
+      RAILWAY_ENVIRONMENT_ID: ${{ vars.RAILWAY_STAGING_ENVIRONMENT_ID }}
+      API_SERVICE_ID: ${{ vars.RAILWAY_STAGING_API_SERVICE_ID }}
+      WORKER_SERVICE_ID: ${{ vars.RAILWAY_STAGING_WORKER_SERVICE_ID }}
+      AI_SERVICE_ID: ${{ vars.RAILWAY_STAGING_AI_SERVICE_ID }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.resolve.outputs.sha }}
+      - name: Deploy API, worker and AI runtime from the same immutable images
+        run: |
+          set -euo pipefail
+          owner="$(tr '[:upper:]' '[:lower:]' <<<"$OWNER")"
+          RAILWAY_SERVICE_ID="$API_SERVICE_ID" \
+            bash scripts/release/deploy-railway.sh "$REGISTRY/$owner/icehott-api:$SHA"
+          RAILWAY_SERVICE_ID="$WORKER_SERVICE_ID" \
+            bash scripts/release/deploy-railway.sh "$REGISTRY/$owner/icehott-api:$SHA"
+          RAILWAY_SERVICE_ID="$AI_SERVICE_ID" \
+            bash scripts/release/deploy-railway.sh "$REGISTRY/$owner/icehott-ai:$SHA"
+
+  deploy-web:
+    name: Deploy staging web (Vercel)
+    needs: [resolve, build, migrate]
+    if: needs.resolve.outputs.deploy_enabled == 'true'
+    runs-on: ubuntu-latest
+    environment: staging
+    permissions:
+      contents: read
+    env:
+      VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+      VERCEL_ORG_ID: ${{ vars.VERCEL_ORG_ID }}
+      VERCEL_PROJECT_ID: ${{ vars.VERCEL_PROJECT_ID }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.resolve.outputs.sha }}
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+      # Next.js inlines NEXT_PUBLIC_* at build time and staging/production differ, so the web
+      # bundle is built per tier from the SAME commit with a pinned CLI and a frozen lockfile
+      # (npm ci via apps/web/vercel.json). It is not promoted as a binary.
+      - name: Require a public HTTPS API URL (a missing value silently falls back to localhost)
+        working-directory: apps/web
+        run: |
+          set -euo pipefail
+          npx --yes vercel@61.0.0 pull --yes --environment=preview --token "$VERCEL_TOKEN"
+          grep -Eq '^NEXT_PUBLIC_API_URL="?https://' .vercel/.env.preview.local \
+            || { echo "NEXT_PUBLIC_API_URL must be set to an https URL for the preview (staging) environment." >&2; exit 1; }
+      - name: Build and deploy the preview (staging) deployment
+        working-directory: apps/web
+        run: |
+          set -euo pipefail
+          npx --yes vercel@61.0.0 build --token "$VERCEL_TOKEN"
+          npx --yes vercel@61.0.0 deploy --prebuilt --token "$VERCEL_TOKEN" >/dev/null
+
+  smoke:
+    name: Staging smoke
+    needs: [resolve, deploy, deploy-web]
+    if: needs.resolve.outputs.deploy_enabled == 'true'
+    runs-on: ubuntu-latest
+    environment: staging
+    permissions:
+      contents: read
+      statuses: write
+    env:
+      SHA: ${{ needs.resolve.outputs.sha }}
+      STAGING_API_URL: ${{ vars.STAGING_API_URL }}
+      GH_TOKEN: ${{ github.token }}
+      REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.resolve.outputs.sha }}
+      - name: Verify the deployed release
+        env:
+          SMOKE_REQUIRE_READY: "true"
+        run: bash scripts/release/smoke.sh "$STAGING_API_URL" "$SHA"
+      - name: Record staging approval for this exact commit
+        run: |
+          curl -fsS -X POST -H "Authorization: Bearer $GH_TOKEN" \
+            "https://api.github.com/repos/$REPO/statuses/$SHA" \
+            -d '{"state":"success","context":"deploy/staging","description":"Staging deployed and smoke-tested"}' >/dev/null

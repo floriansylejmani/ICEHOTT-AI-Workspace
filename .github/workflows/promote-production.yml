@@ -1,0 +1,222 @@
+name: Promote Production
+
+# Manual, explicit promotion of an ALREADY TESTED release.
+#
+# Container images (API/worker, migration bundle, AI runtime) are NOT rebuilt: the images
+# published for the commit during the staging deployment, tagged with the full Git SHA,
+# are migrated and deployed as-is, and each image's revision label is checked against the SHA.
+#
+# The web app IS rebuilt. Next.js inlines NEXT_PUBLIC_* values (for example the API URL)
+# at build time and staging and production necessarily differ, so a binary-identical
+# promotion of the web bundle is not possible. The guarantee is weaker but exact: the SAME
+# commit, built with a pinned Vercel CLI and a frozen lockfile (npm ci via apps/web/vercel.json),
+# whose staging build was produced from that commit as well.
+#
+# The run only proceeds for a commit that
+#   - is reachable from main,
+#   - passed CI,
+#   - was deployed to and smoke-tested on staging (commit status "deploy/staging" created by
+#     GitHub Actions),
+#   - has published images for that exact SHA whose revision label matches it.
+# The production GitHub Environment must require reviewers; that approval gates the
+# migrate and deploy jobs. Mutable tags such as "latest" are never accepted.
+
+on:
+  workflow_dispatch:
+    inputs:
+      git_sha:
+        description: Full 40-character commit SHA that was deployed and smoke-tested on staging
+        required: true
+        type: string
+      confirm:
+        description: Type "promote-production" to confirm
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: promote-production
+  cancel-in-progress: false
+
+env:
+  REGISTRY: ghcr.io
+
+jobs:
+  verify:
+    name: Verify the release is promotable
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
+      statuses: read
+      actions: read
+    outputs:
+      sha: ${{ steps.verify.outputs.sha }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - name: Verify commit, CI, staging evidence and images
+        id: verify
+        env:
+          INPUT_SHA: ${{ inputs.git_sha }}
+          CONFIRM: ${{ inputs.confirm }}
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          OWNER: ${{ github.repository_owner }}
+        run: |
+          set -euo pipefail
+          if [[ "$CONFIRM" != "promote-production" ]]; then
+            echo "Confirmation text does not match." >&2; exit 1
+          fi
+          if ! [[ "$INPUT_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "A full lowercase 40-character commit SHA is required (no tags, branches or 'latest')." >&2; exit 1
+          fi
+          git fetch --no-tags origin main
+          if ! git merge-base --is-ancestor "$INPUT_SHA" origin/main; then
+            echo "Commit is not reachable from main." >&2; exit 1
+          fi
+          ci_runs="$(curl -fsS -H "Authorization: Bearer $GH_TOKEN" \
+            "https://api.github.com/repos/$REPO/actions/workflows/ci.yml/runs?head_sha=$INPUT_SHA&status=success&per_page=1")"
+          grep -q '"total_count": *[1-9]' <<<"$ci_runs" || { echo "No successful CI run for this commit." >&2; exit 1; }
+          statuses="$(curl -fsS -H "Authorization: Bearer $GH_TOKEN" \
+            "https://api.github.com/repos/$REPO/commits/$INPUT_SHA/statuses?per_page=100")"
+          python3 - "$statuses" <<'PY'
+          import json, sys
+          rows = [r for r in json.loads(sys.argv[1]) if r.get("context") == "deploy/staging"]
+          # Newest first. Only a status written by GitHub Actions counts, so a status posted
+          # with a personal token cannot stand in for a real staging deployment.
+          if not rows or rows[0].get("state") != "success":
+              sys.exit("The commit has no successful staging deployment record.")
+          if (rows[0].get("creator") or {}).get("login") != "github-actions[bot]":
+              sys.exit("The staging record was not created by GitHub Actions.")
+          PY
+          owner="$(tr '[:upper:]' '[:lower:]' <<<"$OWNER")"
+          printf '%s' "$GH_TOKEN" | docker login "$REGISTRY" -u "$GITHUB_ACTOR" --password-stdin
+          for image in icehott-api icehott-migrator icehott-ai; do
+            docker manifest inspect "$REGISTRY/$owner/$image:$INPUT_SHA" >/dev/null \
+              || { echo "Missing published image $image for this SHA." >&2; exit 1; }
+          done
+          # A tag alone is not proof of provenance: the image must say it was built from this commit.
+          for image in icehott-api icehott-migrator; do
+            docker pull -q "$REGISTRY/$owner/$image:$INPUT_SHA" >/dev/null
+            revision="$(docker inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$REGISTRY/$owner/$image:$INPUT_SHA")"
+            if [[ "$revision" != "$INPUT_SHA" ]]; then
+              echo "Image $image is tagged with this SHA but was not built from it." >&2; exit 1
+            fi
+          done
+          echo "sha=$INPUT_SHA" >> "$GITHUB_OUTPUT"
+          echo "Promoting $INPUT_SHA (already built, tested and staged)." >> "$GITHUB_STEP_SUMMARY"
+
+  migrate:
+    name: Migrate production database
+    needs: verify
+    runs-on: ubuntu-latest
+    environment: production
+    permissions:
+      contents: read
+      packages: read
+    env:
+      SHA: ${{ needs.verify.outputs.sha }}
+      OWNER: ${{ github.repository_owner }}
+      REGISTRY_TOKEN: ${{ github.token }}
+      MIGRATION_CONNECTION: ${{ secrets.PRODUCTION_MIGRATION_CONNECTION }}
+    steps:
+      - name: Run the version-pinned migration bundle (failure stops the promotion)
+        run: |
+          set -euo pipefail
+          owner="$(tr '[:upper:]' '[:lower:]' <<<"$OWNER")"
+          printf '%s' "$REGISTRY_TOKEN" | docker login "$REGISTRY" -u "$GITHUB_ACTOR" --password-stdin
+          docker run --rm "$REGISTRY/$owner/icehott-migrator:$SHA" --connection "$MIGRATION_CONNECTION"
+          echo "Production migrated with the bundle built from $SHA." >> "$GITHUB_STEP_SUMMARY"
+
+  deploy:
+    name: Deploy production services
+    needs: [verify, migrate]
+    runs-on: ubuntu-latest
+    environment: production
+    permissions:
+      contents: read
+    env:
+      SHA: ${{ needs.verify.outputs.sha }}
+      OWNER: ${{ github.repository_owner }}
+      RAILWAY_API_TOKEN: ${{ secrets.RAILWAY_API_TOKEN }}
+      RAILWAY_ENVIRONMENT_ID: ${{ vars.RAILWAY_PRODUCTION_ENVIRONMENT_ID }}
+      API_SERVICE_ID: ${{ vars.RAILWAY_PRODUCTION_API_SERVICE_ID }}
+      WORKER_SERVICE_ID: ${{ vars.RAILWAY_PRODUCTION_WORKER_SERVICE_ID }}
+      AI_SERVICE_ID: ${{ vars.RAILWAY_PRODUCTION_AI_SERVICE_ID }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.verify.outputs.sha }}
+      - name: Deploy the exact images that were staged
+        run: |
+          set -euo pipefail
+          owner="$(tr '[:upper:]' '[:lower:]' <<<"$OWNER")"
+          RAILWAY_SERVICE_ID="$API_SERVICE_ID" \
+            bash scripts/release/deploy-railway.sh "$REGISTRY/$owner/icehott-api:$SHA"
+          RAILWAY_SERVICE_ID="$WORKER_SERVICE_ID" \
+            bash scripts/release/deploy-railway.sh "$REGISTRY/$owner/icehott-api:$SHA"
+          RAILWAY_SERVICE_ID="$AI_SERVICE_ID" \
+            bash scripts/release/deploy-railway.sh "$REGISTRY/$owner/icehott-ai:$SHA"
+
+  deploy-web:
+    name: Deploy production web (Vercel)
+    needs: [verify, migrate]
+    runs-on: ubuntu-latest
+    environment: production
+    permissions:
+      contents: read
+    env:
+      VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+      VERCEL_ORG_ID: ${{ vars.VERCEL_ORG_ID }}
+      VERCEL_PROJECT_ID: ${{ vars.VERCEL_PROJECT_ID }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.verify.outputs.sha }}
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+      - name: Require a public HTTPS API URL (a missing value silently falls back to localhost)
+        working-directory: apps/web
+        run: |
+          set -euo pipefail
+          npx --yes vercel@61.0.0 pull --yes --environment=production --token "$VERCEL_TOKEN"
+          grep -Eq '^NEXT_PUBLIC_API_URL="?https://' .vercel/.env.production.local \
+            || { echo "NEXT_PUBLIC_API_URL must be set to an https URL for the production environment." >&2; exit 1; }
+      - name: Build (same commit, pinned CLI, npm ci) and deploy the production deployment
+        working-directory: apps/web
+        run: |
+          set -euo pipefail
+          npx --yes vercel@61.0.0 build --prod --token "$VERCEL_TOKEN"
+          npx --yes vercel@61.0.0 deploy --prebuilt --prod --token "$VERCEL_TOKEN" >/dev/null
+
+  smoke:
+    name: Production smoke
+    needs: [verify, deploy, deploy-web]
+    runs-on: ubuntu-latest
+    environment: production
+    permissions:
+      contents: read
+      statuses: write
+    env:
+      SHA: ${{ needs.verify.outputs.sha }}
+      PRODUCTION_API_URL: ${{ vars.PRODUCTION_API_URL }}
+      GH_TOKEN: ${{ github.token }}
+      REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.verify.outputs.sha }}
+      - name: Verify the deployed release (read-only checks only)
+        env:
+          SMOKE_REQUIRE_READY: "true"
+        run: bash scripts/release/smoke.sh "$PRODUCTION_API_URL" "$SHA"
+      - name: Record the production release for this commit
+        run: |
+          curl -fsS -X POST -H "Authorization: Bearer $GH_TOKEN" \
+            "https://api.github.com/repos/$REPO/statuses/$SHA" \
+            -d '{"state":"success","context":"deploy/production","description":"Production deployed and smoke-tested"}' >/dev/null

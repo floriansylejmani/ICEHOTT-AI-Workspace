@@ -210,6 +210,13 @@ ICEHOTT is a production-oriented AI workspace for agentic work: knowledge, tools
 - Backend Debug suite: 484/484 passing locally; real PostgreSQL race/resume coverage is gated by CI
 - Architecture packet: [docs/PHASE-6-WORKFLOW-AUTHORING-ARTIFACT-EXECUTION.md](docs/PHASE-6-WORKFLOW-AUTHORING-ARTIFACT-EXECUTION.md)
 
+### Phase 7A — Production Environment & Release Foundation (in review)
+- Fail-closed startup validation for staging/production (no dev JWT keys or DB passwords, no auto-migration, no local artifact storage by default); errors name keys, never values
+- One image, explicit `Service__Role`: `Api` runs no background services; `Worker` runs the durable workers and serves only `/health` and `/release`
+- Git SHA release identity at `GET /release`; hardened non-root Docker image and a version-pinned EF migration bundle image
+- Staging deploy (dry-run by default) and manual production promotion workflows that reuse the exact staged images; no live Vercel/Railway resources are created by this phase
+- Architecture: [docs/PHASE-7-PRODUCTION-DEPLOYMENT-SRE.md](docs/PHASE-7-PRODUCTION-DEPLOYMENT-SRE.md); 7A scope and runbook: [docs/PHASE-7A-PRODUCTION-ENVIRONMENT-RELEASE-FOUNDATION.md](docs/PHASE-7A-PRODUCTION-ENVIRONMENT-RELEASE-FOUNDATION.md)
+
 ## Architecture
 
 ```text
