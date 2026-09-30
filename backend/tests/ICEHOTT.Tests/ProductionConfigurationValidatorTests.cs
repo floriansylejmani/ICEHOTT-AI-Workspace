@@ -7,6 +7,8 @@ public sealed class ProductionConfigurationValidatorTests
 {
     private const string PasswordSentinel = "S3cr3t-Pw-Sentinel-7431";
     private const string JwtSentinel = "jwt-Sentinel-Key-Zk29xQ7mPv41LrTa8Ns0Wd5HbYc3Ge6U";
+    private const string ObjectAccessSentinel = "AKIA-SENTINEL-7B";
+    private const string ObjectSecretSentinel = "Object-Secret-Sentinel-7B";
 
     private static Dictionary<string, string?> Safe() => new()
     {
@@ -25,6 +27,11 @@ public sealed class ProductionConfigurationValidatorTests
         ["ArtifactStorage:Provider"] = "S3",
         ["ObjectStorage:Endpoint"] = "https://objects.example",
         ["ObjectStorage:Bucket"] = "icehott-prod-artifacts",
+        ["ObjectStorage:Region"] = "us-east-1",
+        ["ObjectStorage:AccessKeyId"] = ObjectAccessSentinel,
+        ["ObjectStorage:SecretAccessKey"] = ObjectSecretSentinel,
+        ["ObjectStorage:ForcePathStyle"] = "true",
+        ["ObjectStorage:Prefix"] = "icehott/production",
         ["Release:GitSha"] = "c63a6b2337a1e17c056d5adbefc1daba83e8abf1",
         ["ForwardedHeaders:Enabled"] = "true",
         ["ForwardedHeaders:TrustedNetworks:0"] = "10.0.0.0/8"
@@ -178,12 +185,84 @@ public sealed class ProductionConfigurationValidatorTests
         Assert.Empty(Validate(values));
     }
 
-    [Fact]
-    public void Object_Storage_Provider_Requires_Object_Storage_Configuration()
+    [Theory]
+    [InlineData("AzureBlob")]
+    [InlineData("Filesystem")]
+    [InlineData("S4")]
+    public void Unsupported_Artifact_Storage_Providers_Are_Rejected(string provider)
     {
         var values = Safe();
-        values.Remove("ObjectStorage:Bucket");
-        Assert.Contains(Validate(values), x => x.StartsWith("ObjectStorage"));
+        values["ArtifactStorage:Provider"] = provider;
+
+        Assert.Contains(
+            Validate(values),
+            error => error.StartsWith("ArtifactStorage:Provider"));
+    }
+
+    [Theory]
+    [InlineData("ObjectStorage:Endpoint")]
+    [InlineData("ObjectStorage:Bucket")]
+    [InlineData("ObjectStorage:Region")]
+    [InlineData("ObjectStorage:AccessKeyId")]
+    [InlineData("ObjectStorage:SecretAccessKey")]
+    public void S3_Requires_All_Mandatory_Object_Storage_Configuration(string key)
+    {
+        var values = Safe();
+        values.Remove(key);
+
+        Assert.Contains(
+            Validate(values),
+            error => error.StartsWith(key));
+    }
+
+    [Theory]
+    [InlineData("http://objects.example")]
+    [InlineData("https://localhost:9000")]
+    [InlineData("https://127.0.0.1:9000")]
+    [InlineData("https://user:password@objects.example")]
+    [InlineData("not-a-url")]
+    public void Hosted_S3_Endpoint_Must_Be_Explicit_NonLoopback_Https(string endpoint)
+    {
+        var values = Safe();
+        values["ObjectStorage:Endpoint"] = endpoint;
+
+        Assert.Contains(
+            Validate(values),
+            error => error.StartsWith("ObjectStorage:Endpoint"));
+    }
+
+    [Theory]
+    [InlineData("ABCD")]
+    [InlineData("ab")]
+    [InlineData("-bucket")]
+    [InlineData("bucket-")]
+    [InlineData("bucket..name")]
+    [InlineData("192.168.1.1")]
+    [InlineData("bucket_with_underscore")]
+    public void Hosted_S3_Bucket_Must_Use_A_Portable_Private_Bucket_Name(string bucket)
+    {
+        var values = Safe();
+        values["ObjectStorage:Bucket"] = bucket;
+
+        Assert.Contains(
+            Validate(values),
+            error => error.StartsWith("ObjectStorage:Bucket"));
+    }
+
+    [Theory]
+    [InlineData("/icehott")]
+    [InlineData("icehott/")]
+    [InlineData("icehott//prod")]
+    [InlineData("icehott/../prod")]
+    [InlineData("icehott\\prod")]
+    public void Hosted_S3_Prefix_Rejects_Path_Escape_Forms(string prefix)
+    {
+        var values = Safe();
+        values["ObjectStorage:Prefix"] = prefix;
+
+        Assert.Contains(
+            Validate(values),
+            error => error.StartsWith("ObjectStorage:Prefix"));
     }
 
     [Theory]
@@ -324,7 +403,10 @@ public sealed class ProductionConfigurationValidatorTests
         values["Database:AutoMigrate"] = "true";
         values["ConnectionStrings:DefaultConnection"] =
             $"Host=localhost;Username=postgres;Password={PasswordSentinel};SSL Mode=Disable";
-        values["ArtifactStorage:Provider"] = "Local";
+        values["ObjectStorage:Endpoint"] =
+            $"https://{ObjectAccessSentinel}:{ObjectSecretSentinel}@objects.example";
+        values["ObjectStorage:AccessKeyId"] = ObjectAccessSentinel;
+        values["ObjectStorage:SecretAccessKey"] = ObjectSecretSentinel;
 
         var errors = Validate(values);
         Assert.NotEmpty(errors);
@@ -332,6 +414,8 @@ public sealed class ProductionConfigurationValidatorTests
         {
             Assert.DoesNotContain(PasswordSentinel, error);
             Assert.DoesNotContain(JwtSentinel, error);
+            Assert.DoesNotContain(ObjectAccessSentinel, error);
+            Assert.DoesNotContain(ObjectSecretSentinel, error);
             Assert.DoesNotContain("localhost", error);
         }
 
@@ -339,6 +423,8 @@ public sealed class ProductionConfigurationValidatorTests
             ProductionConfigurationValidator.Enforce(Config(values), "Production"));
         Assert.DoesNotContain(PasswordSentinel, exception.Message);
         Assert.DoesNotContain(JwtSentinel, exception.Message);
+        Assert.DoesNotContain(ObjectAccessSentinel, exception.Message);
+        Assert.DoesNotContain(ObjectSecretSentinel, exception.Message);
         Assert.Null(exception.InnerException);
     }
 

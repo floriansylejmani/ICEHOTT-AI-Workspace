@@ -21,6 +21,13 @@ jobs:
       ICEHOTT_POSTGRES_TEST_CONNECTION: Host=localhost;Port=5432;Database=icehott_ci;Username=postgres;Password=postgres
       Jwt__Key: ICEHOTT-ci-only-key-with-at-least-32-characters-2026
       Cors__AllowedOrigins__0: http://localhost:3000
+      # Test-only credentials for the throw-away MinIO container started below.
+      # They protect nothing and never leave the CI runner.
+      ICEHOTT_S3_TEST_ENDPOINT: http://127.0.0.1:9000
+      ICEHOTT_S3_TEST_BUCKET: icehott-ci-artifacts
+      ICEHOTT_S3_TEST_ACCESS_KEY: icehott-ci-minio
+      ICEHOTT_S3_TEST_SECRET_KEY: icehott-ci-minio-secret
+      ICEHOTT_S3_TEST_REGION: us-east-1
     services:
       postgres:
         image: pgvector/pgvector:pg16
@@ -42,6 +49,38 @@ jobs:
         with:
           dotnet-version: 9.0.x
 
+      # Pinned community-maintained MinIO-compatible image (amd64 digest).
+      # CI uses it only as an ephemeral S3 compatibility target.
+      - name: Start S3-compatible MinIO (pinned image, test-only credentials)
+        run: |
+          docker run -d --name icehott-ci-minio -p 9000:9000 \
+            -e MINIO_ROOT_USER="$ICEHOTT_S3_TEST_ACCESS_KEY" \
+            -e MINIO_ROOT_PASSWORD="$ICEHOTT_S3_TEST_SECRET_KEY" \
+            pgsty/minio:RELEASE.2026-08-04T00-00-00Z-amd64@sha256:2b36182f3479c58b5cba920f20479738ee85ce218de0596a244f9a1368268db9 \
+            server /data
+          ready=0
+          for _ in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:9000/minio/health/ready > /dev/null; then
+              ready=1
+              break
+            fi
+            sleep 2
+          done
+          if [ "$ready" != "1" ]; then
+            echo "MinIO did not become ready"
+            docker logs icehott-ci-minio
+            exit 1
+          fi
+
+      - name: Create MinIO test bucket
+        env:
+          AWS_ACCESS_KEY_ID: ${{ env.ICEHOTT_S3_TEST_ACCESS_KEY }}
+          AWS_SECRET_ACCESS_KEY: ${{ env.ICEHOTT_S3_TEST_SECRET_KEY }}
+          AWS_DEFAULT_REGION: ${{ env.ICEHOTT_S3_TEST_REGION }}
+        run: |
+          aws --endpoint-url "$ICEHOTT_S3_TEST_ENDPOINT" s3 mb "s3://$ICEHOTT_S3_TEST_BUCKET"
+          aws --endpoint-url "$ICEHOTT_S3_TEST_ENDPOINT" s3 ls "s3://$ICEHOTT_S3_TEST_BUCKET"
+
       - name: Restore
         run: dotnet restore backend/ICEHOTT.sln
 
@@ -58,7 +97,41 @@ jobs:
         run: dotnet ef database update --project backend/src/ICEHOTT.Persistence/ICEHOTT.Persistence.csproj --startup-project backend/src/ICEHOTT.API/ICEHOTT.API.csproj
 
       - name: Test
-        run: dotnet test backend/ICEHOTT.sln -c Release --no-build
+        run: dotnet test backend/ICEHOTT.sln -c Release --no-build --logger "trx;LogFileName=backend-tests.trx"
+
+      - name: Verify PostgreSQL and S3 integration evidence
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import xml.etree.ElementTree as ET
+
+          files = list(Path("backend/tests").rglob("backend-tests.trx"))
+          if len(files) != 1:
+              raise SystemExit(f"Expected exactly one backend-tests.trx, found {len(files)}")
+
+          root = ET.parse(files[0]).getroot()
+          results = [
+              node for node in root.iter()
+              if node.tag.endswith("UnitTestResult")
+          ]
+
+          s3 = [
+              node for node in results
+              if "S3ArtifactStoreIntegrationTests." in node.attrib.get("testName", "")
+          ]
+          postgres = [
+              node for node in results
+              if "Postgres" in node.attrib.get("testName", "")
+          ]
+
+          print(f"S3 integration tests executed: {len(s3)}")
+          print(f"PostgreSQL integration tests executed: {len(postgres)}")
+
+          if len(s3) < 16 or any(node.attrib.get("outcome") != "Passed" for node in s3):
+              raise SystemExit("Expected at least 16 passing S3 integration tests")
+          if len(postgres) < 74 or any(node.attrib.get("outcome") != "Passed" for node in postgres):
+              raise SystemExit("Expected at least 74 passing PostgreSQL integration tests")
+          PY
 
       - name: Benchmark harness dry-run
         run: dotnet run --project backend/tools/ICEHOTT.Benchmarks/ICEHOTT.Benchmarks.csproj -c Release --no-build -- --dry-run

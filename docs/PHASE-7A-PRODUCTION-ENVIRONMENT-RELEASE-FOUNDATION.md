@@ -19,7 +19,7 @@ Phase 7A delivers the code, container, migration and pipeline foundation for pro
 | Pipelines | `ci.yml` job `release-foundation`, `deploy-staging.yml`, `promote-production.yml` |
 | Scripts | `scripts/release/{smoke,verify-container,deploy-railway}.sh`, `validate_deploy_config.py` |
 
-Out of scope (later subphases): S3 object storage (7B), OpenTelemetry and alerts (7C), backup/restore and DR (7D), load tests and the final release gate (7E).
+Out of scope for 7A: S3 object storage (implemented in 7B), OpenTelemetry and alerts (7C), backup/restore and DR (7D), load tests and the final release gate (7E).
 
 ## 2. Environments
 
@@ -45,7 +45,7 @@ Rejected in staging/production:
 - `Release:GitSha` missing or not the exact **40-character** commit SHA (abbreviated SHAs are tolerated only for local builds).
 - Database connection missing or malformed; empty or well-known password (`change-me`, `postgres`, `password`, `icehott`, `admin`, `root`, `example`); user `postgres`; loopback host; SSL mode below `Require` while `Database:RequireTransportSecurity` is true (the default).
 - `Database:AutoMigrate` true, or any unrecognised boolean value.
-- `ArtifactStorage:Provider` unset, or `Local` without the deliberate `ProductionSafety:AllowLocalArtifactStorage=true` override; any non-local provider without `ObjectStorage:Endpoint` and `ObjectStorage:Bucket`.
+- `ArtifactStorage:Provider` unset, or `Local` without the deliberate `ProductionSafety:AllowLocalArtifactStorage=true` override; any provider other than `Local` or `S3`; for `S3`, an `ObjectStorage:Endpoint` that is not an explicit absolute non-loopback HTTPS URL without embedded credentials, an invalid `ObjectStorage:Bucket`/`Prefix`, or a missing `Region`/`AccessKeyId`/`SecretAccessKey` (see the Phase 7B document).
 - `AiRuntime:BaseUrl` not absolute or loopback.
 - **API role only** (the worker exposes none of this and is not required to hold or know it):
   - `Jwt:Key` missing, shorter than 32 characters, or containing a development/placeholder marker (`development-only`, `never-use-in-production`, `ci-only`, `replace-with`, `change-me`, `changeme`, `placeholder`, `example`).
@@ -139,11 +139,11 @@ Application rollback is a promotion (or staging deploy) of the previous known-go
 
 ## 12. Required runtime variables
 
-`Deployment__Tier`, `Service__Role`, `Release__GitSha` (baked into the image; must be the full 40-character SHA), `ConnectionStrings__DefaultConnection`, `AiRuntime__BaseUrl` (private service URL), `ArtifactStorage__Provider`, plus `ObjectStorage__Endpoint`/`__Bucket` for a non-local provider. **API role only:** `Jwt__Key`, `Jwt__Issuer`, `Jwt__Audience`, `AllowedHosts`, `Cors__AllowedOrigins__0`, `ForwardedHeaders__Enabled=true`, `ForwardedHeaders__TrustedNetworks__0` (the proxy network as CIDR). The worker needs none of the API-only settings. Optional: `OpenAiEmbedding__ApiKey`. Never commit values; inject them from Railway variables.
+`Deployment__Tier`, `Service__Role`, `Release__GitSha` (baked into the image; must be the full 40-character SHA), `ConnectionStrings__DefaultConnection`, `AiRuntime__BaseUrl` (private service URL), `ArtifactStorage__Provider`, plus `ObjectStorage__Endpoint`, `__Bucket`, `__Region`, `__AccessKeyId`, `__SecretAccessKey` (and optionally `__ForcePathStyle`, `__Prefix`) for the `S3` provider. **API role only:** `Jwt__Key`, `Jwt__Issuer`, `Jwt__Audience`, `AllowedHosts`, `Cors__AllowedOrigins__0`, `ForwardedHeaders__Enabled=true`, `ForwardedHeaders__TrustedNetworks__0` (the proxy network as CIDR). The worker needs none of the API-only settings. Optional: `OpenAiEmbedding__ApiKey`. Never commit values; inject them from Railway variables.
 
 ## 13. Known limits and deferred items
 
-- **No object-storage provider yet (7B).** The Local provider is the only implementation, and startup rejects any other provider name. Until 7B ships, a real staging/production deployment can only start with `ArtifactStorage__Provider=Local` and the explicit, temporary `ProductionSafety__AllowLocalArtifactStorage=true` override (data would live on the container volume). This is deliberate: the safe default cannot start rather than silently using disk.
+- **Object storage (resolved in 7B).** Phase 7B adds the S3-compatible `S3ArtifactStore`; see `docs/PHASE-7B-MANAGED-DATA-OBJECT-STORAGE.md`. The `Local` provider remains Development/test only and is still refused in hosted tiers unless the explicit, temporary `ProductionSafety__AllowLocalArtifactStorage=true` override is set. Live-provider verification is still required before production use.
 - Database TLS is required by default; a platform-private network without TLS needs the explicit `Database__RequireTransportSecurity=false`.
 - The platform proxy network for `ForwardedHeaders__TrustedNetworks__0` must be looked up on the platform; it is deliberately not guessed. `UseHttpsRedirection` is unchanged and, with no HTTPS port configured, never redirects; TLS is terminated by the platform.
 - `deploy-railway.sh` is **LIVE PROVIDER VERIFICATION REQUIRED** (mutation contract unconfirmed) and the Vercel steps are unverified against live accounts.

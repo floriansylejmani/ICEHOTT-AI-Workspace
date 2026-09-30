@@ -57,3 +57,16 @@ public sealed class ArtifactTooLargeException : Exception
 
 public sealed class ArtifactStoreIntegrityException(string message)
     : Exception(message);
+
+public sealed class ArtifactStoreUnavailableException : Exception
+{
+    public ArtifactStoreUnavailableException(string message)
+        : base(message)
+    {
+    }
+
+    public ArtifactStoreUnavailableException(string message, Exception innerException)
+        : base(message, innerException)
+    {
+    }
+}

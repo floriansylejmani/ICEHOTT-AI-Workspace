@@ -86,6 +86,9 @@ public sealed class ArtifactMaintenanceService(
                 500,
                 cancellationToken);
         }
+        catch (ArtifactStoreUnavailableException)
+        {
+        }
         catch (IOException)
         {
         }
@@ -174,6 +177,10 @@ public sealed class ArtifactMaintenanceService(
                 artifact,
                 cancellationToken);
         }
+        catch (ArtifactStoreUnavailableException)
+        {
+            return PendingRecoveryOutcome.Deferred;
+        }
         catch (IOException)
         {
             return PendingRecoveryOutcome.Deferred;
@@ -225,6 +232,10 @@ public sealed class ArtifactMaintenanceService(
                     artifact.StorageKey,
                     cancellationToken) is null;
         }
+        catch (ArtifactStoreUnavailableException)
+        {
+            return false;
+        }
         catch (IOException)
         {
             return false;
@@ -249,6 +260,10 @@ public sealed class ArtifactMaintenanceService(
                 stagingKey,
                 cancellationToken);
             return true;
+        }
+        catch (ArtifactStoreUnavailableException)
+        {
+            return false;
         }
         catch (IOException)
         {

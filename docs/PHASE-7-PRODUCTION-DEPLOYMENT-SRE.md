@@ -5,7 +5,7 @@
 **Previous phase:** Phase 6A — Workflow Authoring & Artifact-Gated Execution
 **Architecture choice:** Approach B — Managed production architecture
 
-Implementation status is tracked per subphase at the end of this document. Subphase 7A is documented in [PHASE-7A-PRODUCTION-ENVIRONMENT-RELEASE-FOUNDATION.md](PHASE-7A-PRODUCTION-ENVIRONMENT-RELEASE-FOUNDATION.md).
+Implementation status is tracked per subphase at the end of this document. Subphase 7A is documented in [PHASE-7A-PRODUCTION-ENVIRONMENT-RELEASE-FOUNDATION.md](PHASE-7A-PRODUCTION-ENVIRONMENT-RELEASE-FOUNDATION.md), and Phase 7B in [PHASE-7B-MANAGED-DATA-OBJECT-STORAGE.md](PHASE-7B-MANAGED-DATA-OBJECT-STORAGE.md).
 
 ## 1. Objective
 
@@ -198,11 +198,11 @@ Secrets must never appear in: normal application logs; exceptions returned to th
 
 ## 8. Object storage abstraction
 
-Introduce a provider boundary, for example `IArtifactObjectStore`.
+Use the existing provider-neutral `IArtifactStore` boundary; Phase 7B does not introduce a second storage abstraction.
 
 Responsibilities: stage object; finalize object; open read stream; verify existence/metadata; delete object; clean stale staging object.
 
-Implementations: `LocalArtifactObjectStore`, `S3ArtifactObjectStore`.
+Implementations: `LocalArtifactStore`, `S3ArtifactStore` (behind the existing `IArtifactStore` boundary; see the Phase 7B document).
 
 The domain/database continues to own artifact state and authorization. The object store owns bytes only. A successful object upload without the corresponding successful database transition must be recoverable by maintenance. A successful database transition without a durable object must fail closed and be detectable by reconciliation.
 
@@ -356,7 +356,7 @@ Infrastructure adds:
 Phase 7 will not be implemented as one large change. Each subphase receives its own branch, tests, review and merge gate.
 
 - **7A — Production Environment & Release Foundation:** production configuration; startup safety validation; API/worker role split; production Docker hardening; environment separation; Vercel/Railway deployment definitions; staging deployment; explicit migration job; release metadata/Git SHA; production promotion workflow.
-- **7B — Managed Data & Object Storage:** managed PostgreSQL/pgvector contract; Redis production config; `IArtifactObjectStore`; local provider migration; S3-compatible provider; reconciliation/recovery; storage integration tests.
+- **7B — Managed Data & Object Storage:** managed PostgreSQL/pgvector authority contract; Redis explicitly remains optional because the current backend does not depend on it; existing `IArtifactStore` provider boundary; Local/S3 provider selection; S3-compatible provider; reconciliation/recovery; real storage integration tests.
 - **7C — Observability & Alerting:** ASP.NET OpenTelemetry; FastAPI/OpenTelemetry instrumentation; OTEL Collector; traces/metrics/log correlation; operational metrics; dashboards; alert rules; secret/high-cardinality audit.
 - **7D — Backup, Restore & Disaster Recovery:** database backup automation; retention; artifact recovery; restore drill; rollback procedure; DR runbook; RPO/RTO evidence.
 - **7E — Performance & Production Release Gate:** k6 performance suite; concurrency/load validation; staging soak/smoke; production promotion; post-deploy verification; final Phase 7 evidence report.
@@ -412,7 +412,7 @@ with isolated staging and production configuration, explicit migrations, immutab
 | Subphase | Status |
 |---|---|
 | 7A Production Environment & Release Foundation | Implemented on `phase-7a-production-environment-release-foundation` (see the 7A document) |
-| 7B Managed Data & Object Storage | Not started |
+| 7B Managed Data & Object Storage | Implemented on `phase-7b-managed-data-object-storage` (see `PHASE-7B-MANAGED-DATA-OBJECT-STORAGE.md`); live-provider verification required |
 | 7C Observability & Alerting | Not started |
 | 7D Backup, Restore & Disaster Recovery | Not started |
 | 7E Performance & Production Release Gate | Not started |
