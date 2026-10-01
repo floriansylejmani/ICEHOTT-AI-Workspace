@@ -48,7 +48,8 @@ public sealed class ArtifactStorageRegistrationTests
             ["ArtifactStorage:RootPath"] = Path.GetTempPath()
         });
 
-        Assert.IsType<LocalArtifactStore>(provider.GetRequiredService<IArtifactStore>());
+        Assert.IsType<LocalArtifactStore>(
+            Assert.IsType<InstrumentedArtifactStore>(provider.GetRequiredService<IArtifactStore>()).Inner);
         Assert.Null(provider.GetService<IAmazonS3>());
     }
 
@@ -69,7 +70,8 @@ public sealed class ArtifactStorageRegistrationTests
         values["ArtifactStorage:RootPath"] = "";
         using var provider = Build(values);
 
-        Assert.IsType<S3ArtifactStore>(provider.GetRequiredService<IArtifactStore>());
+        Assert.IsType<S3ArtifactStore>(
+            Assert.IsType<InstrumentedArtifactStore>(provider.GetRequiredService<IArtifactStore>()).Inner);
 
         var client = Assert.IsType<AmazonS3Client>(provider.GetRequiredService<IAmazonS3>());
         Assert.Same(client, provider.GetRequiredService<IAmazonS3>());

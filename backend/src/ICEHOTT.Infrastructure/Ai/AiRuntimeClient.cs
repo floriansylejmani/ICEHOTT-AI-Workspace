@@ -1,13 +1,57 @@
+using System.Diagnostics;
 using System.Net.Http.Json;
 using ICEHOTT.Application.Abstractions;
+using ICEHOTT.Application.Observability;
 
 namespace ICEHOTT.Infrastructure.Ai;
 
 public sealed class AiRuntimeClient(HttpClient httpClient) : IAiRuntimeClient
 {
-    public async Task<AiRuntimeReply> ReplyAsync(
+    public Task<AiRuntimeReply> ReplyAsync(
         AiRuntimeRequest request,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default) =>
+        MeasureAsync("chat", () => ReplyCoreAsync(request, cancellationToken));
+
+    public Task<AiEmbeddingReply> EmbedAsync(
+        IReadOnlyList<string> texts,
+        CancellationToken cancellationToken = default) =>
+        MeasureAsync("embeddings", () => EmbedCoreAsync(texts, cancellationToken));
+
+    private static async Task<T> MeasureAsync<T>(string operation, Func<Task<T>> action)
+    {
+        var started = Stopwatch.GetTimestamp();
+        var outcome = "success";
+        try
+        {
+            return await action();
+        }
+        catch (OperationCanceledException)
+        {
+            outcome = "cancelled";
+            throw;
+        }
+        catch
+        {
+            outcome = "failure";
+            throw;
+        }
+        finally
+        {
+            var tags = new[]
+            {
+                IcehottMetrics.Tag("operation", operation),
+                IcehottMetrics.Tag("outcome", outcome)
+            };
+            IcehottMetrics.AiRuntimeRequests.Add(1, tags);
+            IcehottMetrics.AiRuntimeRequestDuration.Record(
+                Stopwatch.GetElapsedTime(started).TotalSeconds,
+                tags);
+        }
+    }
+
+    private async Task<AiRuntimeReply> ReplyCoreAsync(
+        AiRuntimeRequest request,
+        CancellationToken cancellationToken)
     {
         try
         {
@@ -48,9 +92,9 @@ public sealed class AiRuntimeClient(HttpClient httpClient) : IAiRuntimeClient
         }
     }
 
-    public async Task<AiEmbeddingReply> EmbedAsync(
+    private async Task<AiEmbeddingReply> EmbedCoreAsync(
         IReadOnlyList<string> texts,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken)
     {
         try
         {

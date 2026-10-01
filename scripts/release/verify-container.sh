@@ -61,11 +61,25 @@ docker network create "$network" >/dev/null
 docker run -d --name "$database" --network "$network" \
   -e POSTGRES_USER=icehott_app -e POSTGRES_PASSWORD="$db_password" -e POSTGRES_DB=icehott \
   "$pg_image" >/dev/null
-for _ in $(seq 1 40); do
-  docker exec "$database" pg_isready -U icehott_app -d icehott >/dev/null 2>&1 && break
+# The PostgreSQL image starts a temporary Unix-socket server during init and then
+# replaces it with the final server. Probing without -h can observe that temporary
+# server and race the shutdown/restart. Require the final TCP listener instead.
+database_ready=0
+for _ in $(seq 1 60); do
+  if docker exec "$database" pg_isready -h 127.0.0.1 -p 5432 -U icehott_app -d icehott >/dev/null 2>&1; then
+    database_ready=1
+    break
+  fi
+  if [[ "$(docker inspect --format '{{.State.Running}}' "$database" 2>/dev/null || true)" != "true" ]]; then
+    docker logs "$database" >&2 || true
+    fail "database container exited before becoming ready"
+  fi
   sleep 1
 done
-docker exec "$database" pg_isready -U icehott_app -d icehott >/dev/null || fail "database did not become ready"
+if [[ "$database_ready" != "1" ]]; then
+  docker logs "$database" >&2 || true
+  fail "database did not become ready on its final TCP listener"
+fi
 
 connection="Host=$database;Port=5432;Database=icehott;Username=icehott_app;Password=$db_password"
 docker run --rm --network "$network" "$migrator_image" --connection "$connection" >/dev/null

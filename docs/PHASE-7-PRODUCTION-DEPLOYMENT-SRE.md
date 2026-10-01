@@ -413,6 +413,6 @@ with isolated staging and production configuration, explicit migrations, immutab
 |---|---|
 | 7A Production Environment & Release Foundation | Implemented on `phase-7a-production-environment-release-foundation` (see the 7A document) |
 | 7B Managed Data & Object Storage | Implemented on `phase-7b-managed-data-object-storage` (see `PHASE-7B-MANAGED-DATA-OBJECT-STORAGE.md`); live-provider verification required |
-| 7C Observability & Alerting | Not started |
+| 7C Observability & Alerting | Implemented on `phase-7c-observability-alerting` (see `PHASE-7C-OBSERVABILITY-ALERTING.md`); live-provider verification required |
 | 7D Backup, Restore & Disaster Recovery | Not started |
 | 7E Performance & Production Release Gate | Not started |

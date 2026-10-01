@@ -6,9 +6,15 @@ from typing import Literal
 from fastapi import FastAPI
 from pydantic import BaseModel, Field
 
+from app.telemetry import configure_telemetry, load_settings
+
 EMBEDDING_DIMENSIONS = 64
 
 app = FastAPI(title="ICEHOTT AI Service", version="0.3.0")
+
+# OpenTelemetry is opt-in (OBSERVABILITY_ENABLED). Invalid enabled config fails startup; a dead
+# collector never affects requests. See app/telemetry.py.
+telemetry = configure_telemetry(app, load_settings())
 
 
 class ChatMessage(BaseModel):

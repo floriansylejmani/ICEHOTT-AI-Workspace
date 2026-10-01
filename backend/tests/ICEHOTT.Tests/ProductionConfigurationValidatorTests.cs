@@ -438,4 +438,62 @@ public sealed class ProductionConfigurationValidatorTests
             ProductionConfigurationValidator.Enforce(Config(values), "Production"));
         Assert.DoesNotContain(PasswordSentinel, exception.Message);
     }
+
+    [Fact]
+    public void Safe_Configuration_Without_Observability_Remains_Valid()
+    {
+        Assert.Empty(Validate(Safe()));
+    }
+
+    [Fact]
+    public void Hosted_Observability_Accepts_A_Valid_Https_Collector()
+    {
+        var values = Safe();
+        values["Observability:Enabled"] = "true";
+        values["Observability:Otlp:Endpoint"] = "https://collector.example:4317";
+        values["Observability:Traces:SamplingRatio"] = "0.2";
+        Assert.Empty(Validate(values));
+    }
+
+    [Theory]
+    [InlineData("Observability:Otlp:Endpoint", "http://collector.example")]
+    [InlineData("Observability:Otlp:Endpoint", "")]
+    [InlineData("Observability:Otlp:Protocol", "udp")]
+    [InlineData("Observability:Traces:SamplingRatio", "2")]
+    public void Hosted_Observability_Fails_Closed_On_Dangerous_Settings(string key, string value)
+    {
+        var values = Safe();
+        values["Observability:Enabled"] = "true";
+        values["Observability:Otlp:Endpoint"] = "https://collector.example:4317";
+        values[key] = value;
+
+        Assert.Contains(Validate(values), error => error.StartsWith(key));
+    }
+
+    [Fact]
+    public void Hosted_Required_Telemetry_Cannot_Be_Silently_Disabled()
+    {
+        var values = Safe();
+        values["Observability:Required"] = "true";
+
+        Assert.Contains(Validate(values), error => error.StartsWith("Observability:Enabled"));
+    }
+
+    [Fact]
+    public void Observability_Validation_Messages_Never_Echo_Secrets()
+    {
+        const string secret = "otlp-header-secret-sentinel-33";
+        var values = Safe();
+        values["Observability:Enabled"] = "true";
+        values["Observability:Otlp:Endpoint"] = $"http://user:{secret}.example";
+        values["Observability:Otlp:Headers"] = $"broken {secret}";
+
+        var errors = Validate(values);
+        Assert.NotEmpty(errors);
+        Assert.All(errors, error => Assert.DoesNotContain(secret, error));
+
+        var exception = Assert.Throws<ProductionConfigurationException>(() =>
+            ProductionConfigurationValidator.Enforce(Config(values), "Production"));
+        Assert.DoesNotContain(secret, exception.Message);
+    }
 }

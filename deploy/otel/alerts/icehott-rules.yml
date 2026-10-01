@@ -1,0 +1,132 @@
+# ICEHOTT Prometheus-compatible recording and alert rules (Phase 7C).
+#
+# INITIAL BASELINES: every threshold below is a starting point that must be calibrated against
+# real staging/production traffic before paging anyone. Severity meaning:
+#   critical = page now, warning = ticket / business hours.
+# Metric names assume the collector's Prometheus exporter (deploy/otel/collector.yaml), where
+# OpenTelemetry names are converted (dots to underscores, unit/`_total` suffixes) and the OTel
+# service name becomes the `job` label (`icehott/icehott-api`, `icehott/icehott-worker`,
+# `icehott/icehott-ai`).
+
+groups:
+  - name: icehott-recording
+    interval: 30s
+    rules:
+      - record: icehott:http_server_5xx_ratio:rate5m
+        expr: |
+          sum(rate(http_server_request_duration_seconds_count{job="icehott/icehott-api", http_response_status_code=~"5.."}[5m]))
+          /
+          clamp_min(sum(rate(http_server_request_duration_seconds_count{job="icehott/icehott-api"}[5m])), 1e-9)
+      - record: icehott:http_server_request_duration_seconds:p95_5m
+        expr: |
+          histogram_quantile(0.95,
+            sum by (le) (rate(http_server_request_duration_seconds_bucket{job="icehott/icehott-api"}[5m])))
+      - record: icehott:ai_runtime_failure_ratio:rate5m
+        expr: |
+          sum(rate(icehott_ai_runtime_requests_total{outcome="failure"}[5m]))
+          /
+          clamp_min(sum(rate(icehott_ai_runtime_requests_total[5m])), 1e-9)
+      - record: icehott:readiness_failure_ratio:rate5m
+        expr: |
+          sum by (component) (rate(icehott_readiness_checks_total{outcome="failed"}[5m]))
+          /
+          clamp_min(sum by (component) (rate(icehott_readiness_checks_total[5m])), 1e-9)
+
+  - name: icehott-alerts
+    rules:
+      - alert: IcehottApiNotReady
+        # Requires a black-box probe of GET /ready (for example blackbox_exporter or the platform
+        # health check exported as probe_success).
+        expr: probe_success{job="icehott-api-ready"} == 0
+        for: 2m
+        labels: {severity: critical}
+        annotations:
+          summary: API readiness failing for 2 minutes
+          runbook: docs/PHASE-7C-OBSERVABILITY-ALERTING.md#alerts
+
+      - alert: IcehottHigh5xxRate
+        # Guarded by a minimum request rate to avoid alerting on a handful of requests.
+        expr: |
+          icehott:http_server_5xx_ratio:rate5m > 0.02
+          and sum(rate(http_server_request_duration_seconds_count{job="icehott/icehott-api"}[5m])) > 0.2
+        for: 5m
+        labels: {severity: critical}
+        annotations:
+          summary: More than 2% of API responses are 5xx for 5 minutes
+
+      - alert: IcehottHighApiLatency
+        expr: icehott:http_server_request_duration_seconds:p95_5m > 2
+        for: 10m
+        labels: {severity: warning}
+        annotations:
+          summary: API p95 latency above 2s for 10 minutes
+
+      - alert: IcehottDatabaseUnreachable
+        expr: icehott:readiness_failure_ratio:rate5m{component="database"} > 0.5
+        for: 3m
+        labels: {severity: critical}
+        annotations:
+          summary: PostgreSQL connectivity checks are failing (readiness)
+
+      - alert: IcehottArtifactStorageUnavailable
+        expr: sum(increase(icehott_artifact_store_unavailable_total[10m])) > 5
+        for: 5m
+        labels: {severity: critical}
+        annotations:
+          summary: Artifact object storage is repeatedly unavailable
+
+      - alert: IcehottAiRuntimeFailing
+        expr: |
+          icehott:ai_runtime_failure_ratio:rate5m > 0.25
+          and sum(rate(icehott_ai_runtime_requests_total[5m])) > 0.05
+        for: 5m
+        labels: {severity: warning}
+        annotations:
+          summary: More than 25% of AI runtime requests are failing
+
+      - alert: IcehottAiReadinessFailing
+        expr: icehott:readiness_failure_ratio:rate5m{component="ai_runtime"} > 0.5
+        for: 5m
+        labels: {severity: warning}
+        annotations:
+          summary: The API cannot reach the AI runtime (readiness)
+
+      - alert: IcehottWorkflowWorkerFailing
+        expr: |
+          sum(increase(icehott_workflow_runner_loop_failures_total[10m])) > 3
+          or sum(increase(icehott_workflow_scheduler_loop_failures_total[10m])) > 3
+        for: 5m
+        labels: {severity: critical}
+        annotations:
+          summary: Workflow runner or scheduler loop is repeatedly failing
+
+      - alert: IcehottWorkflowLeasesLost
+        expr: sum(increase(icehott_workflow_runs_processed_total{outcome="lease_lost"}[15m])) > 5
+        for: 10m
+        labels: {severity: warning}
+        annotations:
+          summary: Workflow runs are repeatedly losing their lease (worker instability)
+
+      - alert: IcehottTelemetryPipelineDown
+        # Warning only: telemetry is auxiliary and its loss must not page the business on-call.
+        expr: up{job="otel-collector"} == 0
+        for: 10m
+        labels: {severity: warning}
+        annotations:
+          summary: OpenTelemetry Collector is not being scraped or is down
+
+      - alert: IcehottTelemetryExportFailing
+        expr: |
+          sum(rate(otelcol_exporter_send_failed_spans_total[10m])) > 0
+          or sum(rate(otelcol_exporter_send_failed_metric_points_total[10m])) > 0
+        for: 15m
+        labels: {severity: warning}
+        annotations:
+          summary: Collector is failing to export telemetry to its upstream backend
+
+      - alert: IcehottApiMetricsMissing
+        expr: absent(http_server_request_duration_seconds_count{job="icehott/icehott-api"})
+        for: 20m
+        labels: {severity: warning}
+        annotations:
+          summary: No API request metrics received for 20 minutes (traffic gap or telemetry outage)

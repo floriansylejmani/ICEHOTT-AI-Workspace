@@ -1,0 +1,70 @@
+rule_files:
+  - icehott-rules.yml
+
+evaluation_interval: 30s
+
+tests:
+  - interval: 1m
+    input_series:
+      # 10 req/s total, 5% of them 5xx.
+      - series: 'http_server_request_duration_seconds_count{job="icehott/icehott-api", http_response_status_code="200"}'
+        values: '0+570x30'
+      - series: 'http_server_request_duration_seconds_count{job="icehott/icehott-api", http_response_status_code="500"}'
+        values: '0+30x30'
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: IcehottHigh5xxRate
+        exp_alerts:
+          - exp_labels: {severity: critical}
+            exp_annotations:
+              summary: More than 2% of API responses are 5xx for 5 minutes
+
+  - interval: 1m
+    input_series:
+      # Healthy: 0.1% 5xx.
+      - series: 'http_server_request_duration_seconds_count{job="icehott/icehott-api", http_response_status_code="200"}'
+        values: '0+599x30'
+      - series: 'http_server_request_duration_seconds_count{job="icehott/icehott-api", http_response_status_code="500"}'
+        values: '0+1x30'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: IcehottHigh5xxRate
+        exp_alerts: []
+
+  - interval: 1m
+    input_series:
+      - series: 'icehott_artifact_store_unavailable_total{provider="s3", operation="commit"}'
+        values: '0+2x30'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: IcehottArtifactStorageUnavailable
+        exp_alerts:
+          - exp_labels: {severity: critical}
+            exp_annotations:
+              summary: Artifact object storage is repeatedly unavailable
+
+  - interval: 1m
+    input_series:
+      - series: 'up{job="otel-collector"}'
+        values: '0x30'
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: IcehottTelemetryPipelineDown
+        exp_alerts:
+          - exp_labels: {severity: warning, job: otel-collector}
+            exp_annotations:
+              summary: OpenTelemetry Collector is not being scraped or is down
+
+  - interval: 1m
+    input_series:
+      - series: 'icehott_readiness_checks_total{component="database", outcome="failed"}'
+        values: '0+12x30'
+      - series: 'icehott_readiness_checks_total{component="database", outcome="ok"}'
+        values: '0+0x30'
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: IcehottDatabaseUnreachable
+        exp_alerts:
+          - exp_labels: {severity: critical, component: database}
+            exp_annotations:
+              summary: PostgreSQL connectivity checks are failing (readiness)
