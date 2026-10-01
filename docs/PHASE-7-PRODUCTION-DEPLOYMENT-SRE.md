@@ -411,8 +411,8 @@ with isolated staging and production configuration, explicit migrations, immutab
 
 | Subphase | Status |
 |---|---|
-| 7A Production Environment & Release Foundation | Implemented on `phase-7a-production-environment-release-foundation` (see the 7A document) |
-| 7B Managed Data & Object Storage | Implemented on `phase-7b-managed-data-object-storage` (see `PHASE-7B-MANAGED-DATA-OBJECT-STORAGE.md`); live-provider verification required |
-| 7C Observability & Alerting | Implemented on `phase-7c-observability-alerting` (see `PHASE-7C-OBSERVABILITY-ALERTING.md`); live-provider verification required |
-| 7D Backup, Restore & Disaster Recovery | Not started |
+| 7A Production Environment & Release Foundation | Merged to `main`; live-provider verification remains where documented |
+| 7B Managed Data & Object Storage | Merged to `main` (see `PHASE-7B-MANAGED-DATA-OBJECT-STORAGE.md`); live-provider verification required |
+| 7C Observability & Alerting | Merged to `main` (see `PHASE-7C-OBSERVABILITY-ALERTING.md`); live-provider verification required |
+| 7D Backup, Restore & Disaster Recovery | Implemented on `phase-7d-backup-restore-dr` (see `PHASE-7D-BACKUP-RESTORE-DR.md`); pending Git/CI review and live-provider verification |
 | 7E Performance & Production Release Gate | Not started |

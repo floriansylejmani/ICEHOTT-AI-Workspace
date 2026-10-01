@@ -1,0 +1,187 @@
+name: Recovery
+
+on:
+  push:
+    branches:
+      - main
+      - "phase-*"
+      - "feature/**"
+      - "fix/**"
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  PGVECTOR_IMAGE: pgvector/pgvector:pg16
+  MINIO_IMAGE: pgsty/minio:RELEASE.2026-08-04T00-00-00Z-amd64@sha256:2b36182f3479c58b5cba920f20479738ee85ce218de0596a244f9a1368268db9
+
+jobs:
+  validate-recovery-yaml:
+    name: Validate recovery workflow
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install YAML parser
+        run: python3 -m pip install --disable-pip-version-check PyYAML==6.0.2
+
+      - name: Parse recovery workflow YAML
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import yaml
+          path = Path(".github/workflows/recovery.yml")
+          document = yaml.safe_load(path.read_text(encoding="utf-8"))
+          jobs = document.get("jobs", {})
+          required = {"validate-recovery-yaml", "recovery-unit", "recovery-drill"}
+          missing = required - set(jobs)
+          if missing:
+              raise SystemExit(f"missing recovery jobs: {sorted(missing)}")
+          print("recovery.yml: valid; jobs:", sorted(jobs))
+          PY
+
+  recovery-unit:
+    name: Recovery unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install recovery dependencies
+        run: python3 -m pip install --disable-pip-version-check -r scripts/recovery/requirements.txt
+
+      - name: Shell syntax
+        run: |
+          set -euo pipefail
+          for script in scripts/recovery/*.sh; do
+            echo "checking: $script"
+            bash -n "$script"
+          done
+
+      - name: Python syntax
+        run: |
+          set -euo pipefail
+          python3 -m compileall -q scripts/recovery
+          find scripts/recovery -type d -name __pycache__ -prune -exec rm -rf {} +
+
+      - name: Recovery unit suite
+        working-directory: scripts/recovery
+        run: python3 -m pytest -q --tb=short
+
+  recovery-drill:
+    name: Full restore drill (PostgreSQL + MinIO)
+    runs-on: ubuntu-latest
+    needs:
+      - validate-recovery-yaml
+      - recovery-unit
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: 9.0.x
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install PostgreSQL client
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client
+
+      - name: Install recovery dependencies
+        run: python3 -m pip install --disable-pip-version-check -r scripts/recovery/requirements.txt
+
+      - name: Restore .NET tools and packages
+        run: |
+          dotnet tool restore
+          dotnet restore backend/ICEHOTT.sln
+
+      - name: Build EF migration bundle
+        run: |
+          mkdir -p backend/src/ICEHOTT.API/bin/Release/net9.0
+          dotnet ef migrations bundle \
+            --self-contained -r linux-x64 --force \
+            --project backend/src/ICEHOTT.Persistence/ICEHOTT.Persistence.csproj \
+            --startup-project backend/src/ICEHOTT.API/ICEHOTT.API.csproj \
+            --output backend/src/ICEHOTT.API/bin/Release/net9.0/efbundle
+        env:
+          ASPNETCORE_ENVIRONMENT: Development
+
+      - name: Make recovery scripts executable
+        run: chmod +x scripts/recovery/*.sh
+
+      - name: Run isolated restore drill
+        run: bash scripts/recovery/restore-drill.sh
+        env:
+          GIT_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          DRILL_POSTGRES_IMAGE: ${{ env.PGVECTOR_IMAGE }}
+          DRILL_MINIO_IMAGE: ${{ env.MINIO_IMAGE }}
+          RECOVERY_EVIDENCE_OUT: ${{ runner.temp }}/icehott-recovery-evidence.json
+
+      - name: Validate recovery evidence
+        run: |
+          python3 - "${{ runner.temp }}/icehott-recovery-evidence.json" <<'PY'
+          import json
+          import re
+          import sys
+          from pathlib import Path
+
+          path = Path(sys.argv[1])
+          if not path.is_file():
+              raise SystemExit("recovery evidence not found")
+
+          evidence = json.loads(path.read_text(encoding="utf-8"))
+
+          def check(value, message):
+              if not value:
+                  raise SystemExit(message)
+
+          check(evidence.get("schema_version") == 1, "schema_version must be 1")
+          check(re.fullmatch(r"[0-9a-f]{40}", str(evidence.get("source_release_sha", ""))), "source_release_sha must be full Git SHA")
+          check(evidence.get("target_rpo_seconds") == 3600, "unexpected RPO target")
+          check(evidence.get("target_rto_seconds") == 7200, "unexpected RTO target")
+          check(isinstance(evidence.get("rpo_seconds"), int) and evidence["rpo_seconds"] <= 3600, "RPO exceeds target")
+          check(isinstance(evidence.get("rto_seconds"), int) and evidence["rto_seconds"] <= 7200, "RTO exceeds target")
+          check(evidence.get("rpo_pass") is True, "RPO gate failed")
+          check(evidence.get("rto_pass") is True, "RTO gate failed")
+          check(evidence.get("reconciliation_pass") is True, "reconciliation failed")
+          check(evidence.get("drill_pass") is True, "restore drill failed")
+
+          artifact = evidence.get("artifact_backup", {})
+          check(artifact.get("object_count", 0) >= 1, "artifact backup did not contain an object")
+          check(artifact.get("total_bytes", 0) >= 1, "artifact backup byte count is invalid")
+          check(re.fullmatch(r"[0-9a-f]{64}", str(artifact.get("manifest_sha256", ""))), "artifact manifest SHA invalid")
+          check(re.fullmatch(r"[0-9a-f]{64}", str(evidence.get("db_backup_sha256", ""))), "database backup SHA invalid")
+
+          reconciliation = evidence.get("reconciliation", {})
+          check(reconciliation.get("ready", 0) >= 1, "no Ready artifact was reconciled")
+          check(reconciliation.get("ready_missing", 0) == 0, "Ready artifact missing after restore")
+          check(reconciliation.get("ready_corrupt", 0) == 0, "Ready artifact corrupt after restore")
+          check(reconciliation.get("orphan_final_objects", 0) == 0, "orphan final object found")
+
+          raw = path.read_text(encoding="utf-8")
+          for forbidden in ("drillpass", "drillminiosecret", "drillminioaccess", "postgresql://", "postgres://"):
+              check(forbidden not in raw, f"evidence contains forbidden value: {forbidden}")
+
+          print(f"recovery evidence PASS RPO={evidence['rpo_seconds']}s RTO={evidence['rto_seconds']}s")
+          PY
+
+      - name: Upload recovery evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: recovery-evidence-${{ github.run_id }}
+          path: ${{ runner.temp }}/icehott-recovery-evidence.json
+          if-no-files-found: error

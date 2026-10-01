@@ -1,0 +1,9 @@
+# ICEHOTT Phase 7D — recovery-only dependencies.
+# These packages are intentionally separate from the FastAPI runtime.
+boto3==1.39.1
+botocore==1.39.1
+s3transfer==0.13.0
+urllib3==2.4.0
+psycopg2-binary==2.9.10
+pytest==9.0.3
+PyYAML==6.0.2
