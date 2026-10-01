@@ -88,6 +88,7 @@ TGT_BUCKET="drill-tgt-artifacts"
 
 SRC_DB_URL="postgresql://${PG_USER}:${PG_PASS}@127.0.0.1:${PG_SRC_PORT}/${PG_SRC_DB}"
 TGT_DB_URL="postgresql://${PG_USER}:${PG_PASS}@127.0.0.1:${PG_TGT_PORT}/${PG_TGT_DB}"
+SRC_EF_CONNECTION="Host=127.0.0.1;Port=${PG_SRC_PORT};Database=${PG_SRC_DB};Username=${PG_USER};Password=${PG_PASS}"
 MINIO_ENDPOINT_SRC="http://127.0.0.1:${MINIO_SRC_PORT}"
 MINIO_ENDPOINT_TGT="http://127.0.0.1:${MINIO_TGT_PORT}"
 
@@ -211,17 +212,17 @@ done
 
 if [[ -n "$MIGRATOR" ]]; then
   echo "drill: running migrations via efbundle: $MIGRATOR"
-  "$MIGRATOR" --connection "$SRC_DB_URL"
+  ICEHOTT_MIGRATION_CONNECTION="$SRC_EF_CONNECTION" "$MIGRATOR"
 else
   # Fallback: dotnet ef database update
   echo "drill: efbundle not found; trying dotnet ef database update..."
   if command -v dotnet &>/dev/null; then
     pushd "$REPO_ROOT/backend/src/ICEHOTT.API" >/dev/null
-    ConnectionStrings__DefaultConnection="$SRC_DB_URL" \
+    ICEHOTT_MIGRATION_CONNECTION="$SRC_EF_CONNECTION" \
       ASPNETCORE_ENVIRONMENT="Development" \
       Database__AutoMigrate="true" \
       dotnet ef database update --no-build 2>/dev/null || \
-    ConnectionStrings__DefaultConnection="$SRC_DB_URL" \
+    ICEHOTT_MIGRATION_CONNECTION="$SRC_EF_CONNECTION" \
       ASPNETCORE_ENVIRONMENT="Development" \
       Database__AutoMigrate="true" \
       dotnet ef database update
